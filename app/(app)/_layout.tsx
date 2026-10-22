@@ -5,7 +5,6 @@ import { Spinner } from '../../src/components/primitives/Spinner';
 import { colors } from '../../src/theme';
 
 export default function AppLayout() {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const isLoading = useAuthStore((state) => state.isLoading);
 
   if (isLoading) {
@@ -15,8 +14,6 @@ export default function AppLayout() {
       </View>
     );
   }
-
-  if (!isAuthenticated) return <Redirect href="/login" />;
 
   return <Stack screenOptions={{ headerShown: false }} />;
 }

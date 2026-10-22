@@ -1,11 +1,11 @@
 import { supabase } from '../lib/supabase';
 import type { User } from '../types';
 
-export async function login(email: string, password: string): Promise<User> {
+/*export async function login(email: string, password: string): Promise<User> {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw new Error(error.message);
   return { id: data.user.id, email: data.user.email! };
-}
+}*/
 
 export async function logout(): Promise<void> {
   const { error } = await supabase.auth.signOut();
