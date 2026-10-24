@@ -1,119 +1,76 @@
-import { useEffect, useState } from 'react';
-import { FlatList, ActivityIndicator, View, StyleSheet, Image } from 'react-native';
-import { useAuthStore } from '../../src/state/useAuthStore';
-import { Screen } from '../../src/components/primitives/Screen';
-import { Stack } from '../../src/components/primitives/Stack';
-import { Text } from '../../src/components/primitives/Text';
-import { EmptyState } from '../../src/components/primitives/EmptyState';
-import { StyledButton } from '../../src/components/StyledButton';
-import { Badge } from "@/components/primitives";
+import { useState } from 'react';
+import { View, StyleSheet, Alert } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { useRouter } from 'expo-router';
+
+import { Screen } from '@/components/primitives/Screen';
+import { Stack } from '@/components/primitives/Stack';
+import { Text } from '@/components/primitives/Text';
+import { StyledButton } from '@/components/StyledButton';
 import { colors, spacing } from "@/theme";
-import { getPlantList } from '../../src/services/plantService';
-import type { PlantSpecies } from '../../src/types/PlantSpecies';
 
 export default function HomeScreen() {
-  const { user, logout } = useAuthStore?.() || { user: null, logout: () => {} };
+  const router = useRouter();
+  const [isLoading, setIsLoading] = useState(false);
 
-  const [plants, setPlants] = useState<PlantSpecies[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const handleGetStarted = async () => {
+    setIsLoading(true);
 
-  useEffect(() => {
-    loadPlants();
-  }, []);
-
-  const loadPlants = async () => {
     try {
-      setLoading(true);
-      setError(null);
-      
-      const response = (await getPlantList()) as { data: PlantSpecies[] };
-      setPlants(response.data || []);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load plants.');
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Denied', 'Camera access is required to take plant photos.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Launch camera with base64 enabled
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.6,
+        base64: true, // Generate base64 data string
+      });
+
+      if (!result.canceled && result.assets[0]?.base64) {
+        const base64Uri = `data:image/jpeg;base64,${result.assets[0].base64}`;
+
+        router.push({
+          pathname: '/add-plant',
+          params: { photoUri: encodeURIComponent(base64Uri) },
+        } as any);
+      }
+    } catch (error) {
+      console.error('Camera capture error:', error);
+      Alert.alert('Error', 'Failed to capture plant photo.');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
-  const renderPlantCard = ({ item }: { item: PlantSpecies }) => (
-    <View style={styles.card}>
-      {item.default_image?.thumbnail ? (
-        <Image 
-          source={{ uri: item.default_image.thumbnail }} 
-          style={styles.plantImage} 
-        />
-      ) : (
-        <View style={[styles.plantImage, styles.placeholderImage]}>
-          <Text size="sm">No Image</Text>
-        </View>
-      )}
-
-      {/* FIXED: Removed 'style' prop from Stack and applied to View container instead */}
-      <View style={styles.cardContent}>
-        <Stack gap="sm">
-          <Text weight="bold" size="md">{item.common_name || 'Unknown Plant'}</Text>
-          {item.scientific_name?.[0] && (
-            <Text size="sm">
-              {item.scientific_name[0]}
-            </Text>
-          )}
-          {/* FIXED: Removed unsupported 'direction' and 'style' props from Stack */}
-          <View style={styles.badgeRow}>
-            {item.watering && <Badge label={`Water: ${item.watering}`} variant="default" />}
-            {item.cycle && <Badge label={item.cycle} variant="success" />}
-          </View>
-        </Stack>
-      </View>
-    </View>
-  );
-
   return (
     <Screen padding="lg" backgroundColor={colors.background}>
-      {/* FIXED: Applied flex style to outer View instead of Stack */}
-      <View style={styles.container}>
+      <View style={styles.centerContainer}>
         <Stack gap="lg">
-          {/* Header */}
           <Stack gap="sm">
             <Text size="xl" weight="bold">
-              {user?.email ? `Welcome, ${user.email}` : 'Welcome to Plant Tracker'}
+              Welcome to the Plant Care App
             </Text>
-            <Badge label="Plant Library" variant="success" />
+            <Text size="md">
+              Manage your plants and their care easily.
+            </Text>
           </Stack>
 
-          {/* Content States */}
-          {loading ? (
-            <View style={styles.centerContainer}>
-              {/* FIXED: Changed colors.primary to colors.accent */}
-              <ActivityIndicator size="large" color={colors.accent} />
-              <Text size="sm">Loading plants...</Text>
-            </View>
-          ) : error ? (
-            <EmptyState
-              title="Unable to load plants"
-              description={error}
-              action={<StyledButton label="Retry" onPress={loadPlants} />}
+          <View style={styles.buttonContainer}>
+            <StyledButton
+              label="Get Started" 
+              onPress={handleGetStarted} 
+              variant="primary" 
+              isLoading={isLoading}
             />
-          ) : (
-            <FlatList
-              data={plants}
-              keyExtractor={(item) => item.id.toString()}
-              renderItem={renderPlantCard}
-              contentContainerStyle={styles.listContainer}
-              showsVerticalScrollIndicator={false}
-              ListEmptyComponent={
-                <EmptyState
-                  title="No plants found"
-                  description="Check back later or try searching for another species."
-                />
-              }
-            />
-          )}
-
-          {/* Action Button */}
-          {logout && (
-            <StyledButton label="Log out" onPress={logout} variant="secondary" />
-          )}
+          </View>
         </Stack>
       </View>
     </Screen>
@@ -121,46 +78,14 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  listContainer: {
-    paddingBottom: spacing.lg,
-    gap: spacing.md,
-  },
-  card: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-  },
-  plantImage: {
-    width: 70,
-    height: 70,
-    borderRadius: 8,
-  },
-  placeholderImage: {
-    backgroundColor: colors.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardContent: {
-    flex: 1,
-    marginLeft: spacing.md,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.xs,
-    flexWrap: 'wrap',
-  },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: spacing.xxl,
+  },
+  buttonContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.lg,
   },
 });
