@@ -127,14 +127,25 @@ export default function AddPlantScreen() {
     setIsSubmitting(true);
 
     try {
+      const scientificName = selectedSpecies?.scientific_name?.[0] || '';
+      const hasOtherNames = selectedSpecies?.other_name && selectedSpecies.other_name.length > 0;
+      
+      const otherNameValue = (hasOtherNames && selectedSpecies.other_name[0] !== 'N/A')
+        ? selectedSpecies.other_name.join(', ')
+        : scientificName;
+
+      const wateringValue = selectedSpecies?.watering || '';
+      const sunlightValue = selectedSpecies?.sunlight?.join(', ') || '';
+      const finalImageUrl = photoUri || undefined;
+      
       await createPlant(
         name.trim(),
         plantType.trim(),
-        'N/A',            // other_name fallback
-        'Average',        // watering default
-        'Full sun',       // sunlight default
-        lastWatered,      // last_watered date string
-        undefined         // camera photo kept in local UI state
+        otherNameValue,
+        wateringValue,
+        sunlightValue,
+        lastWatered,
+        finalImageUrl
       );
 
       Alert.alert('Success', 'Plant added to your collection!', [
@@ -148,7 +159,7 @@ export default function AddPlantScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  };
+};
 
   const todayStr = new Date().toISOString().split('T')[0];
   const yesterdayDate = new Date();
