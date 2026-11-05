@@ -38,8 +38,8 @@ export async function createPlant(
             watering,
             sunlight,
             last_watered,
-            image: image_url,
-        })
+            image_url,
+            })
         .select()
         .single();
 
@@ -65,4 +65,13 @@ export async function updatePlant(
 export async function deletePlant(id: number | string): Promise<void> {
     const { error } = await supabase.from('plant').delete().eq('id', id);
     if (error) throw new Error(error.message);
+}
+
+export async function hasPlants(): Promise<boolean> {
+  const { count, error } = await supabase
+    .from('plant')
+    .select('id', { count: 'exact', head: true });
+
+  if (error) throw new Error(error.message);
+  return (count ?? 0) > 0;
 }

@@ -38,7 +38,7 @@ export async function getPlantDetails(plantId: number): Promise<PlantSpecies | n
     return null;
   }
 
-  const url = `https://perenual.com/api/v2/species-details/${plantId}?key=${PERENUAL_API_KEY}`;
+  const url = `https://perenual.com/api/v2/species/details/${plantId}?key=${PERENUAL_API_KEY}`;
   console.log('Fetching Details URL:', url);
 
   try {
