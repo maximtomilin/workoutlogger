@@ -106,6 +106,21 @@ const extractPlantInfo = (details: PlantSpecies | null, listItem: PlantSpecies |
 const getThumbnail = (species?: PlantSpecies | null): string | undefined =>
   species?.default_image?.thumbnail || species?.default_image?.medium_url || undefined;
 
+/** Best available species photo URL. Skips Perenual's free-tier "upgrade" placeholder images. */
+const getDefaultImageUrl = (...sources: (PlantSpecies | null | undefined)[]): string | undefined => {
+  for (const source of sources) {
+    const img = source?.default_image as Record<string, unknown> | null | undefined;
+    if (!img) continue;
+
+    const candidates = [img.regular_url, img.medium_url, img.original_url, img.small_url, img.thumbnail];
+    const valid = candidates.find(
+      (u): u is string => typeof u === 'string' && /^https?:\/\//.test(u) && !/upgrade/i.test(u)
+    );
+    if (valid) return valid;
+  }
+  return undefined;
+};
+
 /* -------------------------------------------------------------------------- */
 /*  Small components                                                          */
 /* -------------------------------------------------------------------------- */
@@ -362,7 +377,8 @@ export default function AddPlantScreen() {
       }
 
       const info = extractPlantInfo(details, selectedListItem);
-      console.log('Saving plant info:', info, { detailsLoaded: !!details });
+      const imageToSave = photoUri || getDefaultImageUrl(details, selectedListItem);
+      console.log('Saving plant info:', info, { detailsLoaded: !!details, imageToSave });
 
       await createPlant(
         name.trim(),
@@ -371,7 +387,7 @@ export default function AddPlantScreen() {
         info.watering,
         info.sunlight,
         lastWatered,
-        photoUri || undefined
+        imageToSave
       );
 
       Alert.alert('Success', 'Plant added to your collection!', [
