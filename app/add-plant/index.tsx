@@ -19,8 +19,8 @@ import { Screen } from '@/components/primitives/Screen';
 import { Stack } from '@/components/primitives/Stack';
 import { Text } from '@/components/primitives/Text';
 import { StyledButton } from '@/components/StyledButton';
-import { createPlant } from '@/services/housePlantService';
-import { getPlantList } from '@/services/plantService';
+import { createPlant } from '@/services/plantService';
+import { getPlantDetails, getPlantList } from '@/services/perenualService';
 import type { PlantSpecies } from '@/types/PlantSpecies';
 import { colors, spacing } from '@/theme';
 
@@ -46,10 +46,15 @@ export default function AddPlantScreen() {
     }
   }, [params.photoUri]);
 
-  // API Dropdown State
+  // API Dropdown & Details State
   const [speciesList, setSpeciesList] = useState<PlantSpecies[]>([]);
-  const [selectedSpecies, setSelectedSpecies] = useState<PlantSpecies | null>(null);
+  
+  // Store only the selected Plant ID
+  const [selectedPlantId, setSelectedPlantId] = useState<number | null>(null);
+  const [selectedSpeciesDetails, setSelectedSpeciesDetails] = useState<PlantSpecies | null>(null);
+
   const [isLoadingApi, setIsLoadingApi] = useState(false);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -62,6 +67,33 @@ export default function AddPlantScreen() {
   useEffect(() => {
     fetchSpecies();
   }, []);
+
+  // Fetch full plant details whenever selectedPlantId changes
+  useEffect(() => {
+    if (selectedPlantId === null) return;
+
+    let isMounted = true;
+    setIsLoadingDetails(true);
+
+    getPlantDetails(selectedPlantId)
+      .then((details) => {
+        if (isMounted) {
+          setSelectedSpeciesDetails(details);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to fetch plant details for ID', selectedPlantId, error);
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoadingDetails(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedPlantId]);
 
   // Debounced API search effect
   useEffect(() => {
@@ -87,7 +119,10 @@ export default function AddPlantScreen() {
   };
 
   const handleSelectSpecies = (species: PlantSpecies) => {
-    setSelectedSpecies(species);
+    // 1. Store ONLY the selected plant ID in state
+    setSelectedPlantId(species.id);
+
+    // 2. Set basic UI form type & close modal
     setPlantType(species.common_name || '');
     setIsDropdownOpen(false);
   };
@@ -127,17 +162,25 @@ export default function AddPlantScreen() {
     setIsSubmitting(true);
 
     try {
-      const scientificName = selectedSpecies?.scientific_name?.[0] || '';
-      const hasOtherNames = selectedSpecies?.other_name && selectedSpecies.other_name.length > 0;
+      // 1. Extract scientific/other name directly from details fetched via ID
+      const scientificName = selectedSpeciesDetails?.scientific_name?.[0] || '';
+      const hasOtherNames = selectedSpeciesDetails?.other_name && selectedSpeciesDetails.other_name.length > 0;
       
-      const otherNameValue = (hasOtherNames && selectedSpecies.other_name[0] !== 'N/A')
-        ? selectedSpecies.other_name.join(', ')
+      const otherNameValue = (hasOtherNames && selectedSpeciesDetails.other_name[0] !== 'N/A')
+        ? selectedSpeciesDetails.other_name.join(', ')
         : scientificName;
 
-      const wateringValue = selectedSpecies?.watering || '';
-      const sunlightValue = selectedSpecies?.sunlight?.join(', ') || '';
+      // 2. Extract watering & sunlight directly from the ID-driven details object (no hardcoded defaults)
+      const wateringValue = typeof selectedSpeciesDetails?.watering === 'string'
+        ? selectedSpeciesDetails.watering
+        : '';
+
+      const sunlightValue = Array.isArray(selectedSpeciesDetails?.sunlight) && selectedSpeciesDetails.sunlight.length > 0
+        ? selectedSpeciesDetails.sunlight.join(', ')
+        : '';
+
       const finalImageUrl = photoUri || undefined;
-      
+
       await createPlant(
         name.trim(),
         plantType.trim(),
@@ -159,12 +202,20 @@ export default function AddPlantScreen() {
     } finally {
       setIsSubmitting(false);
     }
-};
+  };
 
+  // Dynamic date strings for quick-selection chips
   const todayStr = new Date().toISOString().split('T')[0];
+  
   const yesterdayDate = new Date();
   yesterdayDate.setDate(yesterdayDate.getDate() - 1);
   const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
+
+  const weekAgoDate = new Date();
+  weekAgoDate.setDate(weekAgoDate.getDate() - 7);
+  const weekAgoStr = weekAgoDate.toISOString().split('T')[0];
+
+  const thumbnailUri = selectedSpeciesDetails?.default_image?.thumbnail || selectedSpeciesDetails?.default_image?.medium_url;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
@@ -203,7 +254,7 @@ export default function AddPlantScreen() {
               </View>
             </View>
 
-            {/* Species Lookup Field with Enlarged & Centered Thumbnail */}
+            {/* Species Lookup Field */}
             <View>
               <Text size="sm" weight="medium" style={styles.fieldLabel}>
                 Species Preset (Optional)
@@ -212,27 +263,26 @@ export default function AddPlantScreen() {
                 style={({ pressed }) => [styles.dropdownTrigger, pressed && styles.pressedState]} 
                 onPress={() => setIsDropdownOpen(true)}
               >
-                {selectedSpecies?.default_image?.thumbnail || selectedSpecies?.default_image?.medium_url ? (
-                  <Image 
-                    source={{ 
-                      uri: selectedSpecies.default_image.thumbnail || selectedSpecies.default_image.medium_url 
-                    }} 
-                    style={styles.speciesThumbnail} 
-                  />
+                {thumbnailUri ? (
+                  <Image source={{ uri: thumbnailUri }} style={styles.speciesThumbnail} />
                 ) : null}
 
                 <View style={styles.textContainer}>
-                  <Text weight={selectedSpecies ? "medium" : "normal"} color={selectedSpecies ? colors.text : '#888'}>
-                    {selectedSpecies ? selectedSpecies.common_name : 'Search species to auto-fill type...'}
+                  <Text weight={selectedPlantId ? "medium" : "normal"} color={selectedPlantId ? colors.text : '#888'}>
+                    {selectedSpeciesDetails?.common_name || plantType || 'Search species to auto-fill type...'}
                   </Text>
-                  {selectedSpecies?.scientific_name?.[0] && (
+                  {selectedSpeciesDetails?.scientific_name?.[0] && (
                     <Text size="sm" color="#666">
-                      {selectedSpecies.scientific_name[0]}
+                      {selectedSpeciesDetails.scientific_name[0]}
                     </Text>
                   )}
                 </View>
 
-                <Text color="#888" weight="bold">🔍</Text>
+                {isLoadingDetails ? (
+                  <ActivityIndicator size="small" color={colors.accent || '#2D6A4F'} />
+                ) : (
+                  <Text color="#888" weight="bold">🔍</Text>
+                )}
               </Pressable>
             </View>
 
@@ -297,10 +347,14 @@ export default function AddPlantScreen() {
                   </Pressable>
 
                   <Pressable
-                    style={[styles.chip, lastWatered === '2026-10-17' && styles.chipSelected]}
+                    style={[styles.chip, lastWatered === weekAgoStr && styles.chipSelected]}
                     onPress={() => setQuickDate(7)}
                   >
-                    <Text size="sm" color={colors.text || '#333'}>
+                    <Text
+                      size="sm"
+                      weight={lastWatered === weekAgoStr ? 'bold' : 'normal'}
+                      color={lastWatered === weekAgoStr ? '#FFFFFF' : colors.text || '#333'}
+                    >
                       1 Week Ago
                     </Text>
                   </Pressable>
