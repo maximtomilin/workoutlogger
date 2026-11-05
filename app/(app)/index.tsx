@@ -42,6 +42,10 @@ export default function HomeScreen() {
     };
   }, [router]);
 
+  const handleStartWithoutPhoto = () => {
+    router.push('/add-plant' as any);
+  };
+
   const handleGetStarted = async () => {
     setIsLoading(true);
 
@@ -100,12 +104,21 @@ export default function HomeScreen() {
           </Stack>
 
           <View style={styles.buttonContainer}>
-            <StyledButton
-              label="Get Started"
-              onPress={handleGetStarted}
-              variant="primary"
-              isLoading={isLoading}
-            />
+            <View style={styles.buttonWrapper}>
+              <StyledButton
+                label="Get Started with Photo"
+                onPress={handleGetStarted}
+                variant="primary"
+                isLoading={isLoading}
+              />
+            </View>
+            <View style={styles.buttonWrapper}>
+              <StyledButton
+                label="Start without Photo"
+                onPress={handleStartWithoutPhoto}
+                variant="secondary"
+              />
+            </View>
           </View>
         </Stack>
       </View>
@@ -123,5 +136,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: spacing.lg,
+    gap: 12,
+  },
+  buttonWrapper: {
+    width: '100%',
   },
 });
