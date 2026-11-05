@@ -1,4 +1,4 @@
-import { Text as RNText, StyleSheet } from 'react-native';
+import { Text as RNText, StyleSheet, StyleProp, TextStyle } from 'react-native';
 
 interface TextProps {
   children: React.ReactNode;
@@ -7,6 +7,7 @@ interface TextProps {
   color?: string;
   align?: 'left' | 'center' | 'right';
   numberOfLines?: number;
+  style?: StyleProp<TextStyle>;
 }
 
 export function Text({
@@ -16,6 +17,7 @@ export function Text({
   color,
   align = 'left',
   numberOfLines,
+  style,
 }: TextProps) {
   return (
     <RNText
@@ -25,6 +27,7 @@ export function Text({
         styles[weight],
         { textAlign: align },
         color !== undefined && { color },
+        style,
       ]}
       numberOfLines={numberOfLines}
     >

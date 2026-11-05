@@ -1,3 +1,4 @@
+// @ts-ignore
 import type { StorybookConfig } from '@storybook/react-vite';
 import { mergeConfig } from 'vite';
 import { transformAsync } from '@babel/core';
@@ -47,7 +48,7 @@ const config: StorybookConfig = {
     name: '@storybook/react-vite',
     options: {},
   },
-  viteFinal: async (baseConfig) => {
+  viteFinal: async (baseConfig: any) => {
     return mergeConfig(baseConfig, {
       resolve: {
         alias: {
