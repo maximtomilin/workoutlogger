@@ -23,6 +23,7 @@ import { createPlant } from '@/services/plantService';
 import { getPlantDetails, getPlantList } from '@/services/perenualService';
 import type { PlantSpecies } from '@/types/PlantSpecies';
 import { colors, spacing } from '@/theme';
+import { showAlert } from '@/services/showAlert';
 
 /* -------------------------------------------------------------------------- */
 /*  Constants & helpers                                                       */
@@ -339,7 +340,7 @@ export default function AddPlantScreen() {
   const handleRetakePhoto = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Permission Denied', 'Camera access is required.');
+      showAlert('Permission Denied', 'Camera access is required.');
       return;
     }
 
@@ -358,12 +359,12 @@ export default function AddPlantScreen() {
 
   const handleSubmit = async () => {
     if (!name.trim() || !plantType.trim()) {
-      Alert.alert('Missing Fields', 'Please fill in both the Plant Name and Plant Type.');
+      showAlert('Missing Fields', 'Please fill in both the Plant Name and Plant Type.');
       return;
     }
 
     if (!isValidDateString(lastWatered)) {
-      Alert.alert('Invalid Date', 'Please enter the last watered date as YYYY-MM-DD.');
+      showAlert('Invalid Date', 'Please enter the last watered date as YYYY-MM-DD.');
       return;
     }
 
@@ -390,12 +391,12 @@ export default function AddPlantScreen() {
         imageToSave
       );
 
-      Alert.alert('Success', 'Plant added to your collection!', [
-        { text: 'OK', onPress: () => router.replace('/plant-overview') },
-      ]);
-    } catch (error: any) {
-      Alert.alert('Database Error', error.message || 'Failed to save plant.');
-    } finally {
+      showAlert('Success', 'Plant added to your collection!', () =>
+        router.replace('/plant-overview')
+      );
+      } catch (error: any) {
+        showAlert('Database Error', error.message || 'Failed to save plant.');
+      } finally {
       setIsSubmitting(false);
     }
   };
