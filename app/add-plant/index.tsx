@@ -1,9 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   Image,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,288 +9,163 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import { Screen } from '@/components/primitives/Screen';
-import { Stack } from '@/components/primitives/Stack';
 import { Text } from '@/components/primitives/Text';
 import { StyledButton } from '@/components/StyledButton';
-import { createPlant } from '@/services/plantService';
-import { getPlantDetails, getPlantList } from '@/services/perenualService';
+import { getPlantById, updateLastWatered, updatePlantCare } from '@/services/plantService';
 import { showAlert } from '@/services/showAlert';
-import type { PlantSpecies } from '@/types/PlantSpecies';
-import { colors, spacing } from '@/theme';
-
-/* -------------------------------------------------------------------------- */
-/*  Constants & helpers                                                       */
-/* -------------------------------------------------------------------------- */
+import { getWateringStatus } from '@/services/watering';
+import type { Plant } from '@/types';
+import { colors } from '@/theme';
 
 const ACCENT = colors.accent || '#2D6A4F';
-const SEARCH_DEBOUNCE_MS = 400;
 
-/** Fallback watering interval (days) when Perenual gives no benchmark. Estimates, adjust as you like. */
+/** Default interval (days) for each watering category. Estimates, same as in add-plant. */
 const CATEGORY_INTERVAL_DAYS: Record<string, number> = {
   frequent: 3,
   average: 7,
   minimum: 14,
-  none: 21,
 };
 
-/** Local-time YYYY-MM-DD (toISOString would use UTC and can be off by a day). */
-const formatDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
+const WATERING_OPTIONS = [
+  { label: 'Frequent', value: 'Frequent' },
+  { label: 'Average', value: 'Average' },
+  { label: 'Minimum', value: 'Minimum' },
+];
+
+const SUNLIGHT_OPTIONS = [
+  { label: 'Full sun', value: 'full sun' },
+  { label: 'Part shade', value: 'part shade' },
+  { label: 'Full shade', value: 'full shade' },
+];
+
+type CarePatch = Partial<Pick<Plant, 'watering' | 'sunlight' | 'water_interval_days'>>;
+
+const isUnknown = (value?: string | null): boolean =>
+  !value || !value.trim() || value.trim().toLowerCase() === 'unknown';
+
+const todayString = (): string => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 };
 
-const daysAgoString = (daysAgo: number): string => {
-  const date = new Date();
-  date.setDate(date.getDate() - daysAgo);
-  return formatDate(date);
-};
+/** "Today", "Yesterday", "5 days ago" plus the date itself. */
+const formatLastWatered = (value?: string): string => {
+  if (!value) return 'Not watered yet';
 
-const isValidDateString = (value: string): boolean => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00`);
-  return !Number.isNaN(parsed.getTime()) && formatDate(parsed) === value;
-};
+  const [y, m, d] = value.slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return '';
 
-const parsePhotoUri = (rawUri?: string): string | null => {
-  if (!rawUri) return null;
-  try {
-    return decodeURIComponent(rawUri);
-  } catch {
-    return rawUri;
-  }
-};
+  const watered = new Date(y, m - 1, d);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
-/** Returns '' for non-strings, "N/A", and Perenual's free-tier upgrade placeholders. */
-const cleanString = (value: unknown): string => {
-  if (typeof value !== 'string') return '';
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.toUpperCase() === 'N/A' || /upgrade plan/i.test(trimmed)) return '';
-  return trimmed;
-};
+  const days = Math.round((today.getTime() - watered.getTime()) / 86_400_000);
+  const relative = days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : `${days} days ago`;
 
-const toCleanList = (value: unknown): string[] => {
-  const list = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
-  return list.map(cleanString).filter(Boolean);
-};
-
-/** "\"7-10\"" + "days" -> 9 (average of the range). Returns null if unreadable. */
-const parseBenchmarkDays = (benchmark: unknown): number | null => {
-  if (!benchmark || typeof benchmark !== 'object') return null;
-  const { value, unit } = benchmark as { value?: unknown; unit?: unknown };
-  if (typeof value !== 'string' || /upgrade/i.test(value)) return null;
-
-  const numbers = value.replace(/["']/g, '').match(/\d+(\.\d+)?/g)?.map(Number);
-  if (!numbers || numbers.length === 0) return null;
-
-  const average = numbers.reduce((a, b) => a + b, 0) / numbers.length;
-  const multiplier = typeof unit === 'string' && /week/i.test(unit) ? 7 : 1;
-  return Math.max(1, Math.round(average * multiplier));
-};
-
-/** Merges the details response and the list item, preferring details, and builds what we store. */
-const extractPlantInfo = (details: PlantSpecies | null, listItem: PlantSpecies | null) => {
-  const sources = [details, listItem].filter(Boolean) as PlantSpecies[];
-
-  const firstString = (pick: (s: PlantSpecies) => unknown): string => {
-    for (const s of sources) {
-      const v = cleanString(pick(s));
-      if (v) return v;
-    }
-    return '';
-  };
-
-  const firstList = (pick: (s: PlantSpecies) => unknown): string[] => {
-    for (const s of sources) {
-      const v = toCleanList(pick(s));
-      if (v.length > 0) return v;
-    }
-    return [];
-  };
-
-  const scientificName = firstList((s) => s.scientific_name)[0] ?? '';
-  const otherNames = firstList((s) => s.other_name);
-  const watering = firstString((s) => s.watering);
-
-  const benchmarkDays = sources
-    .map((s) => parseBenchmarkDays((s as any).watering_general_benchmark))
-    .find((n): n is number => n !== null && n !== undefined);
-
-  return {
-    commonName: firstString((s) => s.common_name),
-    otherName: otherNames.length > 0 ? otherNames.join(', ') : scientificName,
-    watering,
-    sunlight: firstList((s) => s.sunlight).join(', '),
-    waterIntervalDays: benchmarkDays ?? CATEGORY_INTERVAL_DAYS[watering.toLowerCase()],
-  };
-};
-
-const getThumbnail = (species?: PlantSpecies | null): string | undefined =>
-  species?.default_image?.thumbnail || species?.default_image?.medium_url || undefined;
-
-/** Best available species photo URL. Skips Perenual's free-tier "upgrade" placeholder images. */
-const getDefaultImageUrl = (...sources: (PlantSpecies | null | undefined)[]): string | undefined => {
-  for (const source of sources) {
-    const img = source?.default_image as Record<string, unknown> | null | undefined;
-    if (!img) continue;
-
-    const candidates = [img.regular_url, img.medium_url, img.original_url, img.small_url, img.thumbnail];
-    const valid = candidates.find(
-      (u): u is string => typeof u === 'string' && /^https?:\/\//.test(u) && !/upgrade/i.test(u)
-    );
-    if (valid) return valid;
-  }
-  return undefined;
+  return `${relative} (${value.slice(0, 10)})`;
 };
 
 /* -------------------------------------------------------------------------- */
 /*  Small components                                                          */
 /* -------------------------------------------------------------------------- */
 
-type DateChipProps = {
+function InfoRow({
+  label,
+  value,
+  valueColor,
+  children,
+}: {
   label: string;
-  selected: boolean;
-  onPress: () => void;
-};
-
-function DateChip({ label, selected, onPress }: DateChipProps) {
+  value?: string;
+  valueColor?: string;
+  children?: React.ReactNode;
+}) {
   return (
-    <Pressable style={[styles.chip, selected && styles.chipSelected]} onPress={onPress}>
-      <Text
-        size="sm"
-        weight={selected ? 'bold' : 'normal'}
-        color={selected ? '#FFFFFF' : colors.text || '#333'}
-      >
+    <View style={styles.infoRow}>
+      <Text size="sm" color="#888">
         {label}
       </Text>
-    </Pressable>
+      <Text weight="medium" color={valueColor}>
+        {value || 'Unknown'}
+      </Text>
+      {children}
+    </View>
   );
 }
 
-type SpeciesPickerModalProps = {
-  visible: boolean;
-  onClose: () => void;
-  onSelect: (species: PlantSpecies) => void;
-};
-
-/** Owns its own search state so the main screen stays simple. */
-function SpeciesPickerModal({ visible, onClose, onSelect }: SpeciesPickerModalProps) {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<PlantSpecies[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const latestRequest = useRef(0);
-
-  useEffect(() => {
-    if (!visible) return;
-
-    // Load the initial list right away, debounce once the user starts typing.
-    const delay = query.trim() ? SEARCH_DEBOUNCE_MS : 0;
-
-    const timer = setTimeout(async () => {
-      const requestId = ++latestRequest.current;
-      setIsLoading(true);
-      try {
-        const response = await getPlantList(query);
-        if (requestId === latestRequest.current) {
-          setResults(response.data || []);
-        }
-      } catch (error) {
-        console.error('Failed to load plant species:', error);
-      } finally {
-        if (requestId === latestRequest.current) {
-          setIsLoading(false);
-        }
-      }
-    }, delay);
-
-    return () => clearTimeout(timer);
-  }, [query, visible]);
-
-  const renderItem = useCallback(
-    ({ item }: { item: PlantSpecies }) => {
-      const image = getThumbnail(item);
-      return (
+function ChoiceChips({
+  options,
+  onSelect,
+  disabled,
+}: {
+  options: { label: string; value: string }[];
+  onSelect: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <View style={styles.chipRow}>
+      {options.map((option) => (
         <Pressable
-          style={({ pressed }) => [styles.speciesItem, pressed && styles.pressedState]}
-          onPress={() => onSelect(item)}
+          key={option.value}
+          disabled={disabled}
+          style={({ pressed }) => [
+            styles.chip,
+            pressed && styles.pressedState,
+            disabled && styles.chipDisabled,
+          ]}
+          onPress={() => onSelect(option.value)}
         >
-          {image ? (
-            <Image source={{ uri: image }} style={styles.modalItemImage} />
-          ) : (
-            <View style={[styles.modalItemImage, styles.placeholderBox]}>
-              <Text size="lg" color="#AAA">
-                🌿
-              </Text>
-            </View>
-          )}
-
-          <View style={styles.textContainer}>
-            <Text weight="bold" size="md">
-              {item.common_name}
-            </Text>
-            <Text size="sm" color="#666">
-              {item.scientific_name?.[0] || 'Unknown scientific name'}
-            </Text>
-          </View>
+          <Text size="sm">{option.label}</Text>
         </Pressable>
-      );
-    },
-    [onSelect]
+      ))}
+    </View>
   );
+}
+
+function IntervalEditor({
+  onSave,
+  isSaving,
+}: {
+  onSave: (days: number) => void;
+  isSaving: boolean;
+}) {
+  const [text, setText] = useState('');
+
+  const submit = () => {
+    const days = parseInt(text, 10);
+    if (!Number.isFinite(days) || days < 1 || days > 365) {
+      showAlert('Invalid number', 'Enter a number of days between 1 and 365.');
+      return;
+    }
+    onSave(days);
+  };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text size="lg" weight="bold">
-              Search Species
-            </Text>
-            <Text size="sm" color="#666">
-              Tap a species to select it
-            </Text>
-          </View>
-
-          <TextInput
-            style={[styles.input, styles.modalSearchInput]}
-            placeholder="Type species name..."
-            placeholderTextColor="#AAA"
-            value={query}
-            onChangeText={setQuery}
-            autoFocus
-          />
-
-          {isLoading ? (
-            <ActivityIndicator size="large" color={ACCENT} style={styles.modalLoader} />
-          ) : (
-            <FlatList
-              data={results}
-              keyExtractor={(item) => item.id.toString()}
-              renderItem={renderItem}
-              ItemSeparatorComponent={() => <View style={styles.separator} />}
-              ListEmptyComponent={
-                <Text size="sm" color="#888" style={styles.emptyText}>
-                  No species found.
-                </Text>
-              }
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              style={styles.modalList}
-              contentContainerStyle={styles.modalListContent}
-            />
-          )}
-
-          <View style={styles.modalFooter}>
-            <StyledButton label="Cancel" onPress={onClose} variant="secondary" />
-          </View>
-        </View>
-      </SafeAreaView>
-    </Modal>
+    <View style={styles.intervalRow}>
+      <Text size="sm" color="#666">
+        Every
+      </Text>
+      <TextInput
+        style={styles.intervalInput}
+        value={text}
+        onChangeText={(t) => setText(t.replace(/[^0-9]/g, ''))}
+        placeholder="7"
+        placeholderTextColor="#AAA"
+        keyboardType="number-pad"
+        maxLength={3}
+      />
+      <Text size="sm" color="#666">
+        days
+      </Text>
+      <View style={styles.intervalButton}>
+        <StyledButton label="Save" onPress={submit} variant="secondary" isLoading={isSaving} />
+      </View>
+    </View>
   );
 }
 
@@ -300,314 +173,220 @@ function SpeciesPickerModal({ visible, onClose, onSelect }: SpeciesPickerModalPr
 /*  Screen                                                                    */
 /* -------------------------------------------------------------------------- */
 
-export default function AddPlantScreen() {
+export default function PlantDetailScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ photoUri?: string }>();
+  const { id } = useLocalSearchParams<{ id: string }>();
 
-  // Photo
-  const [photoUri, setPhotoUri] = useState<string | null>(parsePhotoUri(params.photoUri));
+  const [plant, setPlant] = useState<Plant | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isWatering, setIsWatering] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (params.photoUri) setPhotoUri(parsePhotoUri(params.photoUri));
-  }, [params.photoUri]);
+    if (!id) return;
 
-  // Species selection (we only keep the ID, then look up the details by ID)
-  const [selectedPlantId, setSelectedPlantId] = useState<number | null>(null);
-  const [selectedSpeciesDetails, setSelectedSpeciesDetails] = useState<PlantSpecies | null>(null);
-  const [selectedListItem, setSelectedListItem] = useState<PlantSpecies | null>(null);
-  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
+    let active = true;
+    setIsLoading(true);
+    setError(null);
 
-  // Form
-  const [name, setName] = useState('');
-  const [plantType, setPlantType] = useState('');
-  const [lastWatered, setLastWatered] = useState(() => daysAgoString(0));
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Fetch full plant details whenever the selected ID changes
-  useEffect(() => {
-    if (selectedPlantId === null) return;
-
-    let cancelled = false;
-    setIsLoadingDetails(true);
-
-    getPlantDetails(selectedPlantId)
-      .then((details) => {
-        if (!cancelled) setSelectedSpeciesDetails(details);
+    getPlantById(id)
+      .then((result) => {
+        if (active) setPlant(result);
       })
-      .catch((error) => {
-        console.error('Failed to fetch plant details for ID', selectedPlantId, error);
+      .catch((e) => {
+        if (active) setError(e.message || 'Failed to load plant.');
       })
       .finally(() => {
-        if (!cancelled) setIsLoadingDetails(false);
+        if (active) setIsLoading(false);
       });
 
     return () => {
-      cancelled = true;
+      active = false;
     };
-  }, [selectedPlantId]);
+  }, [id]);
 
-  const handleSelectSpecies = useCallback((species: PlantSpecies) => {
-    setSelectedListItem(species);
-    setSelectedSpeciesDetails((prev) => (prev?.id === species.id ? prev : null));
-    setSelectedPlantId(species.id);
-    setPlantType(species.common_name || '');
-    setIsPickerOpen(false);
-  }, []);
-
-  const handlePlantTypeChange = (text: string) => {
-    setPlantType(text);
-    // Typing a custom type means the species data no longer applies
-    if (selectedPlantId !== null) {
-      setSelectedPlantId(null);
-      setSelectedSpeciesDetails(null);
-      setSelectedListItem(null);
-    }
+  const handleBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/plant-overview' as any);
   };
 
-  const handleRetakePhoto = async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      showAlert('Permission Denied', 'Camera access is required.');
-      return;
-    }
+  const handleWater = async () => {
+    if (!plant) return;
 
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.6,
-      base64: true,
-    });
-
-    if (!result.canceled && result.assets[0]?.base64) {
-      setPhotoUri(`data:image/jpeg;base64,${result.assets[0].base64}`);
-    }
-  };
-
-  const handleSubmit = async () => {
-    if (!name.trim() || !plantType.trim()) {
-      showAlert('Missing Fields', 'Please fill in both the Plant Name and Plant Type.');
-      return;
-    }
-
-    if (!isValidDateString(lastWatered)) {
-      showAlert('Invalid Date', 'Please enter the last watered date as YYYY-MM-DD.');
-      return;
-    }
-
-    setIsSubmitting(true);
+    const today = todayString();
+    setIsWatering(true);
 
     try {
-      // Make sure we have details for the selected ID, even if the effect hasn't finished
-      let details = selectedSpeciesDetails;
-      if (selectedPlantId !== null && (!details || details.id !== selectedPlantId)) {
-        details = await getPlantDetails(selectedPlantId);
-      }
-
-      const info = extractPlantInfo(details, selectedListItem);
-      const imageToSave = photoUri || getDefaultImageUrl(details, selectedListItem);
-
-      console.log('Saving plant info:', info, { detailsLoaded: !!details, imageToSave });
-      console.log(
-        'Watering fields:',
-        details?.watering,
-        (details as any)?.watering_general_benchmark
-      );
-
-      await createPlant(
-        name.trim(),
-        plantType.trim() || info.commonName,
-        info.otherName,
-        info.watering,
-        info.sunlight,
-        lastWatered,
-        imageToSave,
-        info.waterIntervalDays
-      );
-
-      showAlert('Success', 'Plant added to your collection!', () =>
-        router.replace('/plant-overview' as any)
-      );
-    } catch (error: any) {
-      showAlert('Database Error', error.message || 'Failed to save plant.');
+      await updateLastWatered(plant.id, today);
+      setPlant({ ...plant, last_watered: today });
+    } catch (e: any) {
+      showAlert('Error', e.message || 'Failed to update watering date.');
     } finally {
-      setIsSubmitting(false);
+      setIsWatering(false);
     }
   };
 
-  const thumbnailUri = getThumbnail(selectedSpeciesDetails);
-  const hasSelection = selectedPlantId !== null;
-  const previewUri = photoUri || getDefaultImageUrl(selectedSpeciesDetails, selectedListItem);
+  /** Saves user-provided care info and updates the screen. */
+  const savePatch = async (patch: CarePatch) => {
+    if (!plant) return;
+    setIsSaving(true);
 
-  const dateChips = [
-    { label: 'Today', daysAgo: 0 },
-    { label: 'Yesterday', daysAgo: 1 },
-    { label: '1 Week Ago', daysAgo: 7 },
-  ];
+    try {
+      await updatePlantCare(plant.id, patch);
+      setPlant({ ...plant, ...patch });
+    } catch (e: any) {
+      showAlert('Error', e.message || 'Failed to save.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handlePickWatering = (value: string) => {
+    const patch: CarePatch = { watering: value };
+    // No interval yet? Use the default for this category so the schedule works right away
+    if (!plant?.water_interval_days) {
+      patch.water_interval_days = CATEGORY_INTERVAL_DAYS[value.toLowerCase()];
+    }
+    savePatch(patch);
+  };
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={ACCENT} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (error || !plant) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centered}>
+          <Text weight="bold">{error ? "Couldn't load this plant" : 'Plant not found'}</Text>
+          {error ? (
+            <Text size="sm" color="#666" style={styles.centeredText}>
+              {error}
+            </Text>
+          ) : null}
+          <View style={styles.backButtonSmall}>
+            <StyledButton label="Go back" onPress={handleBack} variant="secondary" />
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const status = getWateringStatus(plant.last_watered, plant.water_interval_days);
+  const wateredToday = plant.last_watered?.slice(0, 10) === todayString();
+
+  const wateringUnknown = isUnknown(plant.watering);
+  const sunlightUnknown = isUnknown(plant.sunlight);
+  const intervalUnknown = !plant.water_interval_days;
+
+  const scheduleText = plant.water_interval_days
+    ? `Every ~${plant.water_interval_days} days${status ? ` · ${status.label}` : ''}`
+    : 'Not set';
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
-      <Screen backgroundColor={colors.background}>
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.scrollContent}
-        >
-          <Stack gap="lg">
-            <View>
-              <Text size="xl" weight="bold">
-                Add Plant
-              </Text>
-              <Text size="sm" color="#666">
-                Enter basic details to track your plant
-              </Text>
-            </View>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.content}
+      >
+        {plant.image_url ? (
+          <Image source={{ uri: plant.image_url }} style={styles.image} resizeMode="cover" />
+        ) : (
+          <View style={[styles.image, styles.imagePlaceholder]}>
+            <Text size="xl">🌿</Text>
+          </View>
+        )}
 
-            {/* Photo */}
-            <View style={styles.photoContainer}>
-              {previewUri ? (
-                <Image
-                  source={{ uri: previewUri }}
-                  style={styles.previewImage}
-                  resizeMode="cover"
-                  onError={(e) => console.error('Image load error:', e.nativeEvent.error)}
-                />
-              ) : (
-                <View style={[styles.previewImage, styles.placeholderBox]}>
-                  <Text color="#888">No photo taken</Text>
-                </View>
-              )}
-              {!photoUri && previewUri ? (
-                <Text size="sm" color="#888" style={styles.previewHint}>
-                  Using the species photo
+        <View style={styles.titleBlock}>
+          <Text size="xl" weight="bold">
+            {plant.name}
+          </Text>
+          {plant.common_name ? (
+            <Text size="md" color="#666">
+              {plant.common_name}
+            </Text>
+          ) : null}
+        </View>
+
+        <View style={styles.card}>
+          <InfoRow label="Other names" value={plant.other_name} />
+          <View style={styles.separator} />
+
+          <InfoRow label="Watering" value={wateringUnknown ? 'Unknown' : plant.watering}>
+            {wateringUnknown ? (
+              <>
+                <Text size="sm" color="#666" style={styles.editHint}>
+                  Not available for this plant. Choose it yourself:
                 </Text>
-              ) : null}
-              <View style={styles.retakeButtonWrapper}>
-                <StyledButton
-                  label={photoUri ? 'Retake Photo' : 'Take Photo'}
-                  onPress={handleRetakePhoto}
-                  variant="secondary"
+                <ChoiceChips
+                  options={WATERING_OPTIONS}
+                  onSelect={handlePickWatering}
+                  disabled={isSaving}
                 />
-              </View>
-            </View>
+              </>
+            ) : null}
+          </InfoRow>
+          <View style={styles.separator} />
 
-            {/* Species lookup */}
-            <View>
-              <Text size="sm" weight="medium" style={styles.fieldLabel}>
-                Species Preset (Optional)
-              </Text>
-              <Pressable
-                style={({ pressed }) => [styles.dropdownTrigger, pressed && styles.pressedState]}
-                onPress={() => setIsPickerOpen(true)}
-              >
-                {thumbnailUri ? (
-                  <Image source={{ uri: thumbnailUri }} style={styles.speciesThumbnail} />
-                ) : null}
-
-                <View style={styles.textContainer}>
-                  <Text
-                    weight={hasSelection ? 'medium' : 'normal'}
-                    color={hasSelection ? colors.text : '#888'}
-                  >
-                    {selectedSpeciesDetails?.common_name ||
-                      (hasSelection ? plantType : '') ||
-                      'Search species to auto-fill type...'}
-                  </Text>
-                  {selectedSpeciesDetails?.scientific_name?.[0] ? (
-                    <Text size="sm" color="#666">
-                      {selectedSpeciesDetails.scientific_name[0]}
-                    </Text>
-                  ) : null}
-                </View>
-
-                {isLoadingDetails ? (
-                  <ActivityIndicator size="small" color={ACCENT} />
-                ) : (
-                  <Text color="#888" weight="bold">
-                    🔍
-                  </Text>
-                )}
-              </Pressable>
-            </View>
-
-            {/* Form fields */}
-            <Stack gap="md">
-              <View>
-                <Text size="sm" weight="medium" style={styles.fieldLabel}>
-                  Plant Name *
+          <InfoRow
+            label="Watering schedule"
+            value={scheduleText}
+            valueColor={status?.overdue ? '#C53030' : undefined}
+          >
+            {intervalUnknown ? (
+              <>
+                <Text size="sm" color="#666" style={styles.editHint}>
+                  How often should this plant be watered?
                 </Text>
-                <TextInput
-                  style={styles.input}
-                  value={name}
-                  onChangeText={setName}
-                  placeholder="e.g. Sunny or Living Room Monstera"
-                  placeholderTextColor="#AAA"
+                <IntervalEditor
+                  onSave={(days) => savePatch({ water_interval_days: days })}
+                  isSaving={isSaving}
                 />
-              </View>
+              </>
+            ) : null}
+          </InfoRow>
+          <View style={styles.separator} />
 
-              <View>
-                <Text size="sm" weight="medium" style={styles.fieldLabel}>
-                  Plant Type *
+          <InfoRow label="Sunlight" value={sunlightUnknown ? 'Unknown' : plant.sunlight}>
+            {sunlightUnknown ? (
+              <>
+                <Text size="sm" color="#666" style={styles.editHint}>
+                  Not available for this plant. Choose it yourself:
                 </Text>
-                <TextInput
-                  style={styles.input}
-                  value={plantType}
-                  onChangeText={handlePlantTypeChange}
-                  placeholder="e.g. Monstera Deliciosa, Snake Plant, Fern"
-                  placeholderTextColor="#AAA"
+                <ChoiceChips
+                  options={SUNLIGHT_OPTIONS}
+                  onSelect={(value) => savePatch({ sunlight: value })}
+                  disabled={isSaving}
                 />
-              </View>
+              </>
+            ) : null}
+          </InfoRow>
+          <View style={styles.separator} />
 
-              <View>
-                <Text size="sm" weight="medium" style={styles.fieldLabel}>
-                  Last Watered
-                </Text>
+          <InfoRow label="Last watered" value={formatLastWatered(plant.last_watered)} />
+        </View>
 
-                <View style={styles.chipRow}>
-                  {dateChips.map(({ label, daysAgo }) => {
-                    const value = daysAgoString(daysAgo);
-                    return (
-                      <DateChip
-                        key={label}
-                        label={label}
-                        selected={lastWatered === value}
-                        onPress={() => setLastWatered(value)}
-                      />
-                    );
-                  })}
-                </View>
+        <View style={styles.waterButton}>
+          <StyledButton
+            label={wateredToday ? 'Watered today ✓' : '💧 Water'}
+            onPress={handleWater}
+            variant="primary"
+            isLoading={isWatering}
+          />
+        </View>
 
-                <TextInput
-                  style={[styles.input, styles.dateInput]}
-                  value={lastWatered}
-                  onChangeText={setLastWatered}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#AAA"
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={10}
-                />
-              </View>
-            </Stack>
-
-            {/* Submit */}
-            <View style={styles.buttonContainer}>
-              <StyledButton
-                label="Save Plant"
-                onPress={handleSubmit}
-                variant="primary"
-                isLoading={isSubmitting}
-              />
-            </View>
-          </Stack>
-        </ScrollView>
-
-        <SpeciesPickerModal
-          visible={isPickerOpen}
-          onClose={() => setIsPickerOpen(false)}
-          onSelect={handleSelectSpecies}
-        />
-      </Screen>
+        <View style={styles.backButton}>
+          <StyledButton label="Back to my plants" onPress={handleBack} variant="secondary" />
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -621,89 +400,59 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background || '#F7F9F7',
   },
-  scrollContent: {
+  content: {
     paddingHorizontal: 20,
     paddingVertical: 16,
+    gap: 20,
   },
-
-  // Photo
-  photoContainer: {
+  centered: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 32,
   },
-  previewImage: {
-    width: 200,
-    height: 200,
+  centeredText: {
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  image: {
+    width: '100%',
+    aspectRatio: 1,
     borderRadius: 16,
     backgroundColor: '#EAEAEA',
   },
-  previewHint: {
-    marginTop: 8,
-  },
-  placeholderBox: {
+  imagePlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#CCC',
-    borderStyle: 'dashed',
   },
-  retakeButtonWrapper: {
-    marginTop: 12,
-    width: 150,
+  titleBlock: {
+    gap: 2,
   },
-
-  // Form
-  fieldLabel: {
-    marginBottom: 6,
-    color: colors.text || '#222',
-  },
-  input: {
+  card: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 12,
+    borderRadius: 16,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: colors.text || '#000',
   },
-  dateInput: {
+  infoRow: {
+    paddingVertical: 14,
+    gap: 2,
+  },
+  separator: {
+    height: 1,
+    backgroundColor: '#EDF2F7',
+  },
+
+  // Editing unknown fields
+  editHint: {
     marginTop: 8,
   },
-  textContainer: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  buttonContainer: {
-    marginTop: spacing.xs || 8,
-    marginBottom: spacing.lg || 32,
-  },
-
-  // Species trigger
-  dropdownTrigger: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 14,
-  },
-  speciesThumbnail: {
-    width: 52,
-    height: 52,
-    borderRadius: 10,
-    backgroundColor: '#EAEAEA',
-  },
-
-  // Date chips
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 4,
+    marginTop: 8,
   },
   chip: {
     paddingHorizontal: 14,
@@ -713,60 +462,44 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  chipSelected: {
-    backgroundColor: ACCENT,
-    borderColor: ACCENT,
-  },
-
-  // Modal
-  modalContainer: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    backgroundColor: colors.background || '#F7F9F7',
-  },
-  modalHeader: {
-    marginBottom: 16,
-  },
-  modalSearchInput: {
-    fontSize: 16,
-    paddingVertical: 14,
-  },
-  modalLoader: {
-    marginTop: 28,
-  },
-  modalList: {
-    flex: 1,
-    marginTop: 12,
-  },
-  modalListContent: {
-    paddingBottom: 16,
-  },
-  modalFooter: {
-    marginTop: 12,
-  },
-  emptyText: {
-    textAlign: 'center',
-    marginTop: 24,
-  },
-  speciesItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 4,
-    gap: 16,
-  },
-  modalItemImage: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-    backgroundColor: '#EAEAEA',
-  },
-  separator: {
-    height: 1,
-    backgroundColor: '#EDF2F7',
+  chipDisabled: {
+    opacity: 0.5,
   },
   pressedState: {
     opacity: 0.6,
+  },
+  intervalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  intervalInput: {
+    width: 64,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 15,
+    textAlign: 'center',
+    color: colors.text || '#000',
+  },
+  intervalButton: {
+    width: 90,
+    marginLeft: 'auto',
+  },
+
+  waterButton: {
+    alignItems: 'center',
+  },
+  backButton: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  backButtonSmall: {
+    marginTop: 16,
+    width: 150,
   },
 });

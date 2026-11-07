@@ -92,3 +92,11 @@ export async function updateLastWatered(plantId: number | string, lastWatered: s
 
   if (error) throw new Error(error.message);
 }
+
+export async function updatePlantCare(
+  id: number | string,
+  fields: { watering?: string; sunlight?: string; water_interval_days?: number }
+): Promise<void> {
+  const { error } = await supabase.from('plant').update(fields).eq('id', id);
+  if (error) throw new Error(error.message);
+}

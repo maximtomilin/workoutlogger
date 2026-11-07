@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { Screen } from '@/components/primitives/Screen';
 import { Stack } from '@/components/primitives/Stack';
 import { Text } from '@/components/primitives/Text';
 import { StyledButton } from '@/components/StyledButton';
+import { capturePhoto, setPendingPhoto } from '@/services/photo';
 import { hasPlants } from '@/services/plantService';
+import { showAlert } from '@/services/showAlert';
 import { colors, spacing } from '@/theme';
 
-// Change this to the route of your plant overview screen
 const PLANTS_ROUTE = '/plant-overview';
 
 export default function HomeScreen() {
@@ -33,7 +33,6 @@ export default function HomeScreen() {
       })
       .catch((error) => {
         console.error('Plant check failed:', error);
-        // On failure, fall back to the normal welcome screen
         if (active) setIsCheckingPlants(false);
       });
 
@@ -42,43 +41,27 @@ export default function HomeScreen() {
     };
   }, [router]);
 
-  const handleStartWithoutPhoto = () => {
-    router.push('/add-plant' as any);
-  };
-
   const handleGetStarted = async () => {
     setIsLoading(true);
 
     try {
-      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      const photo = await capturePhoto();
 
-      if (!permissionResult.granted) {
-        Alert.alert('Permission Denied', 'Camera access is required to take plant photos.');
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.6,
-        base64: true,
-      });
-
-      if (!result.canceled && result.assets[0]?.base64) {
-        const base64Uri = `data:image/jpeg;base64,${result.assets[0].base64}`;
-
-        router.push({
-          pathname: '/add-plant',
-          params: { photoUri: encodeURIComponent(base64Uri) },
-        } as any);
+      if (photo) {
+        setPendingPhoto(photo);
+        router.push('/add-plant' as any);
       }
     } catch (error) {
       console.error('Camera capture error:', error);
-      Alert.alert('Error', 'Failed to capture plant photo.');
+      showAlert('Error', 'Failed to capture plant photo.');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleStartWithoutPhoto = () => {
+    setPendingPhoto(null); // make sure no old photo is carried over
+    router.push('/add-plant' as any);
   };
 
   // Avoid flashing the welcome screen before a redirect
@@ -133,8 +116,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   buttonContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 260,
+    alignItems: 'stretch',
     marginTop: spacing.lg,
     gap: 12,
   },
