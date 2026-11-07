@@ -7,4 +7,5 @@ export interface Plant {
   sunlight: string;
   last_watered?: string;
   image_url?: string;
+  water_interval_days?: number;
 }

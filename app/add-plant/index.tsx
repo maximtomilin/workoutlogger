@@ -20,9 +20,9 @@ import { Text } from '@/components/primitives/Text';
 import { StyledButton } from '@/components/StyledButton';
 import { createPlant } from '@/services/plantService';
 import { getPlantDetails, getPlantList } from '@/services/perenualService';
+import { showAlert } from '@/services/showAlert';
 import type { PlantSpecies } from '@/types/PlantSpecies';
 import { colors, spacing } from '@/theme';
-import { showAlert } from '@/services/showAlert';
 
 /* -------------------------------------------------------------------------- */
 /*  Constants & helpers                                                       */
@@ -30,6 +30,14 @@ import { showAlert } from '@/services/showAlert';
 
 const ACCENT = colors.accent || '#2D6A4F';
 const SEARCH_DEBOUNCE_MS = 400;
+
+/** Fallback watering interval (days) when Perenual gives no benchmark. Estimates, adjust as you like. */
+const CATEGORY_INTERVAL_DAYS: Record<string, number> = {
+  frequent: 3,
+  average: 7,
+  minimum: 14,
+  none: 21,
+};
 
 /** Local-time YYYY-MM-DD (toISOString would use UTC and can be off by a day). */
 const formatDate = (date: Date): string => {
@@ -73,6 +81,21 @@ const toCleanList = (value: unknown): string[] => {
   return list.map(cleanString).filter(Boolean);
 };
 
+/** "\"7-10\"" + "days" -> 9 (average of the range). Returns null if unreadable. */
+const parseBenchmarkDays = (benchmark: unknown): number | null => {
+  if (!benchmark || typeof benchmark !== 'object') return null;
+  const { value, unit } = benchmark as { value?: unknown; unit?: unknown };
+  if (typeof value !== 'string' || /upgrade/i.test(value)) return null;
+
+  const numbers = value.replace(/["']/g, '').match(/\d+(\.\d+)?/g)?.map(Number);
+  if (!numbers || numbers.length === 0) return null;
+
+  const average = numbers.reduce((a, b) => a + b, 0) / numbers.length;
+  const multiplier = typeof unit === 'string' && /week/i.test(unit) ? 7 : 1;
+  return Math.max(1, Math.round(average * multiplier));
+};
+
+/** Merges the details response and the list item, preferring details, and builds what we store. */
 const extractPlantInfo = (details: PlantSpecies | null, listItem: PlantSpecies | null) => {
   const sources = [details, listItem].filter(Boolean) as PlantSpecies[];
 
@@ -94,12 +117,18 @@ const extractPlantInfo = (details: PlantSpecies | null, listItem: PlantSpecies |
 
   const scientificName = firstList((s) => s.scientific_name)[0] ?? '';
   const otherNames = firstList((s) => s.other_name);
+  const watering = firstString((s) => s.watering);
+
+  const benchmarkDays = sources
+    .map((s) => parseBenchmarkDays((s as any).watering_general_benchmark))
+    .find((n): n is number => n !== null && n !== undefined);
 
   return {
     commonName: firstString((s) => s.common_name),
     otherName: otherNames.length > 0 ? otherNames.join(', ') : scientificName,
-    watering: firstString((s) => s.watering),
+    watering,
     sunlight: firstList((s) => s.sunlight).join(', '),
+    waterIntervalDays: benchmarkDays ?? CATEGORY_INTERVAL_DAYS[watering.toLowerCase()],
   };
 };
 
@@ -319,12 +348,12 @@ export default function AddPlantScreen() {
   }, [selectedPlantId]);
 
   const handleSelectSpecies = useCallback((species: PlantSpecies) => {
-  setSelectedListItem(species);
-  setSelectedSpeciesDetails((prev) => (prev?.id === species.id ? prev : null));
-  setSelectedPlantId(species.id);
-  setPlantType(species.common_name || '');
-  setIsPickerOpen(false);
-}, []);
+    setSelectedListItem(species);
+    setSelectedSpeciesDetails((prev) => (prev?.id === species.id ? prev : null));
+    setSelectedPlantId(species.id);
+    setPlantType(species.common_name || '');
+    setIsPickerOpen(false);
+  }, []);
 
   const handlePlantTypeChange = (text: string) => {
     setPlantType(text);
@@ -378,7 +407,13 @@ export default function AddPlantScreen() {
 
       const info = extractPlantInfo(details, selectedListItem);
       const imageToSave = photoUri || getDefaultImageUrl(details, selectedListItem);
+
       console.log('Saving plant info:', info, { detailsLoaded: !!details, imageToSave });
+      console.log(
+        'Watering fields:',
+        details?.watering,
+        (details as any)?.watering_general_benchmark
+      );
 
       await createPlant(
         name.trim(),
@@ -387,21 +422,23 @@ export default function AddPlantScreen() {
         info.watering,
         info.sunlight,
         lastWatered,
-        imageToSave
+        imageToSave,
+        info.waterIntervalDays
       );
 
       showAlert('Success', 'Plant added to your collection!', () =>
-        router.replace('/plant-overview')
+        router.replace('/plant-overview' as any)
       );
-      } catch (error: any) {
-        showAlert('Database Error', error.message || 'Failed to save plant.');
-      } finally {
+    } catch (error: any) {
+      showAlert('Database Error', error.message || 'Failed to save plant.');
+    } finally {
       setIsSubmitting(false);
     }
   };
 
   const thumbnailUri = getThumbnail(selectedSpeciesDetails);
   const hasSelection = selectedPlantId !== null;
+  const previewUri = photoUri || getDefaultImageUrl(selectedSpeciesDetails, selectedListItem);
 
   const dateChips = [
     { label: 'Today', daysAgo: 0 },
@@ -429,9 +466,9 @@ export default function AddPlantScreen() {
 
             {/* Photo */}
             <View style={styles.photoContainer}>
-              {photoUri ? (
+              {previewUri ? (
                 <Image
-                  source={{ uri: photoUri }}
+                  source={{ uri: previewUri }}
                   style={styles.previewImage}
                   resizeMode="cover"
                   onError={(e) => console.error('Image load error:', e.nativeEvent.error)}
@@ -441,6 +478,11 @@ export default function AddPlantScreen() {
                   <Text color="#888">No photo taken</Text>
                 </View>
               )}
+              {!photoUri && previewUri ? (
+                <Text size="sm" color="#888" style={styles.previewHint}>
+                  Using the species photo
+                </Text>
+              ) : null}
               <View style={styles.retakeButtonWrapper}>
                 <StyledButton
                   label={photoUri ? 'Retake Photo' : 'Take Photo'}
@@ -594,6 +636,9 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 16,
     backgroundColor: '#EAEAEA',
+  },
+  previewHint: {
+    marginTop: 8,
   },
   placeholderBox: {
     alignItems: 'center',

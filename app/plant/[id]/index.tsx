@@ -5,11 +5,21 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Text } from '@/components/primitives/Text';
 import { StyledButton } from '@/components/StyledButton';
-import { getPlantById } from '@/services/plantService';
+import { getPlantById, updateLastWatered } from '@/services/plantService';
+import { showAlert } from '@/services/showAlert';
+import { getWateringStatus } from '@/services/watering';
 import type { Plant } from '@/types';
 import { colors } from '@/theme';
 
 const ACCENT = colors.accent || '#2D6A4F';
+
+const todayString = (): string => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
 
 /** "Today", "Yesterday", "5 days ago" plus the date itself. */
 const formatLastWatered = (value?: string): string => {
@@ -23,19 +33,28 @@ const formatLastWatered = (value?: string): string => {
   today.setHours(0, 0, 0, 0);
 
   const days = Math.round((today.getTime() - watered.getTime()) / 86_400_000);
-  const relative =
-    days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : `${days} days ago`;
+  const relative = days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : `${days} days ago`;
 
   return `${relative} (${value.slice(0, 10)})`;
 };
 
-function InfoRow({ label, value }: { label: string; value?: string }) {
+function InfoRow({
+  label,
+  value,
+  valueColor,
+}: {
+  label: string;
+  value?: string;
+  valueColor?: string;
+}) {
   return (
     <View style={styles.infoRow}>
       <Text size="sm" color="#888">
         {label}
       </Text>
-      <Text weight="medium">{value || 'Unknown'}</Text>
+      <Text weight="medium" color={valueColor}>
+        {value || 'Unknown'}
+      </Text>
     </View>
   );
 }
@@ -47,6 +66,7 @@ export default function PlantDetailScreen() {
   const [plant, setPlant] = useState<Plant | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isWatering, setIsWatering] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -74,6 +94,23 @@ export default function PlantDetailScreen() {
   const handleBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/plant-overview' as any);
+  };
+
+  const handleWater = async () => {
+    if (!plant) return;
+
+    const today = todayString();
+    setIsWatering(true);
+
+    try {
+      await updateLastWatered(plant.id, today);
+      // Update the screen right away, no refetch needed
+      setPlant({ ...plant, last_watered: today });
+    } catch (e: any) {
+      showAlert('Error', e.message || 'Failed to update watering date.');
+    } finally {
+      setIsWatering(false);
+    }
   };
 
   if (isLoading) {
@@ -104,6 +141,13 @@ export default function PlantDetailScreen() {
     );
   }
 
+  const status = getWateringStatus(plant.last_watered, plant.water_interval_days);
+  const wateredToday = plant.last_watered?.slice(0, 10) === todayString();
+
+  const scheduleText = plant.water_interval_days
+    ? `Every ~${plant.water_interval_days} days${status ? ` · ${status.label}` : ''}`
+    : plant.watering;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -131,9 +175,24 @@ export default function PlantDetailScreen() {
           <View style={styles.separator} />
           <InfoRow label="Watering" value={plant.watering} />
           <View style={styles.separator} />
+          <InfoRow
+            label="Watering schedule"
+            value={scheduleText}
+            valueColor={status?.overdue ? '#C53030' : undefined}
+          />
+          <View style={styles.separator} />
           <InfoRow label="Sunlight" value={plant.sunlight} />
           <View style={styles.separator} />
           <InfoRow label="Last watered" value={formatLastWatered(plant.last_watered)} />
+        </View>
+
+        <View style={styles.waterButton}>
+          <StyledButton
+            label={wateredToday ? 'Watered today ✓' : '💧 Water'}
+            onPress={handleWater}
+            variant="primary"
+            isLoading={isWatering}
+          />
         </View>
 
         <View style={styles.backButton}>
@@ -191,6 +250,9 @@ const styles = StyleSheet.create({
   separator: {
     height: 1,
     backgroundColor: '#EDF2F7',
+  },
+  waterButton: {
+    alignItems: 'center',
   },
   backButton: {
     alignItems: 'center',

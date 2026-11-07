@@ -11,6 +11,7 @@ function mapPlant(row: Record<string, unknown>): Plant {
     sunlight: row.sunlight as string,
     last_watered: (row.last_watered as string | null) ?? undefined,
     image_url: (row.image_url as string | null) ?? undefined,
+    water_interval_days: (row.water_interval_days as number | null) ?? undefined,
   };
 }
 
@@ -21,27 +22,22 @@ export async function getPlants(): Promise<Plant[]> {
 }
 
 export async function createPlant(
-    name: string,
-    common_name: string,
-    other_name: string,
-    watering: string,
-    sunlight: string,
-    last_watered?: string,
-    image_url?: string
-    ): Promise<Plant> {
-        const { data, error } = await supabase
-        .from('plant')
-        .insert({
-            name,
-            common_name,
-            other_name,
-            watering,
-            sunlight,
-            last_watered,
-            image_url,
-            })
-        .select()
-        .single();
+  name: string,
+  common_name: string,
+  other_name: string,
+  watering: string,
+  sunlight: string,
+  last_watered?: string,
+  image_url?: string,
+  water_interval_days?: number
+): Promise<Plant> {
+  const { data, error } = await supabase
+    .from('plant')
+    .insert({
+      name, common_name, other_name, watering, sunlight, last_watered, image_url, water_interval_days,
+    })
+    .select()
+    .single();
 
     if (error) throw new Error(error.message);
     return mapPlant(data);
@@ -85,4 +81,14 @@ export async function getPlantById(id: number | string): Promise<Plant | null> {
 
   if (error) throw new Error(error.message);
   return data ? mapPlant(data) : null;
+}
+
+export async function updateLastWatered(plantId: number | string, lastWatered: string): Promise<void> {
+  const { error } = await supabase.from('plant')
+    .update({ last_watered: lastWatered })
+    .eq('id', plantId)
+    .select()
+    .single();
+
+  if (error) throw new Error(error.message);
 }
