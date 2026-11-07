@@ -135,8 +135,7 @@ export default function PlantsScreen() {
     return (
       <PlantCard
         plant={plant}
-        // Hook up a details screen here when you have one
-        onPress={() => console.log('Pressed plant', plant.id)}
+        onPress={() => router.push(`/plant/${plant.id}` as any)}
       />
     );
   };

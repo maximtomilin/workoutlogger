@@ -26,7 +26,7 @@ export default function RootLayout() {
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-        <meta name="apple-mobile-web-app-title" content="UCLL App" />
+        <meta name="apple-mobile-web-app-title" content="Plant Care" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </Head>
       <SafeAreaProvider>
