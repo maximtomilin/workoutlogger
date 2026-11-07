@@ -75,3 +75,14 @@ export async function hasPlants(): Promise<boolean> {
   if (error) throw new Error(error.message);
   return (count ?? 0) > 0;
 }
+
+export async function getPlantById(id: number | string): Promise<Plant | null> {
+  const { data, error } = await supabase
+    .from('plant')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return data ? mapPlant(data) : null;
+}
