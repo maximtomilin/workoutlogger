@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "UCLL Mobile Starter",
-    "slug": "ucll-mobile-starter",
+    "name": "Workout Logger",
+    "slug": "workout-logger",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "ucllstarter",
+    "scheme": "workoutlogger",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {

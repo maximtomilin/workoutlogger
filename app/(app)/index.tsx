@@ -1,127 +1,92 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { useRouter } from 'expo-router';
-
-import { Screen } from '@/components/primitives/Screen';
-import { Stack } from '@/components/primitives/Stack';
-import { Text } from '@/components/primitives/Text';
-import { StyledButton } from '@/components/StyledButton';
-import { capturePhoto, setPendingPhoto } from '@/services/photo';
-import { hasPlants } from '@/services/plantService';
-import { showAlert } from '@/services/showAlert';
-import { colors, spacing } from '@/theme';
-
-const PLANTS_ROUTE = '/plant-overview';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  getWorkoutsWithLastCompleted,
+  type WorkoutWithLastCompleted,
+} from '@/services/workoutService';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const [isCheckingPlants, setIsCheckingPlants] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
+  const [workouts, setWorkouts] = useState<WorkoutWithLastCompleted[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // If the user already has plants, skip the welcome screen
-  useEffect(() => {
-    let active = true;
-
-    hasPlants()
-      .then((exists) => {
-        if (!active) return;
-        if (exists) {
-          router.replace(PLANTS_ROUTE as any);
-        } else {
-          setIsCheckingPlants(false);
-        }
-      })
-      .catch((error) => {
-        console.error('Plant check failed:', error);
-        if (active) setIsCheckingPlants(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [router]);
-
-  const handleGetStarted = async () => {
-    setIsLoading(true);
-
-    try {
-      const photo = await capturePhoto();
-
-      if (photo) {
-        setPendingPhoto(photo);
-        router.push('/add-plant' as any);
-      }
-    } catch (error) {
-      console.error('Camera capture error:', error);
-      showAlert('Error', 'Failed to capture plant photo.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleStartWithoutPhoto = () => {
-    setPendingPhoto(null); // make sure no old photo is carried over
-    router.push('/add-plant' as any);
-  };
-
-  // Avoid flashing the welcome screen before a redirect
-  if (isCheckingPlants) {
-    return (
-      <Screen backgroundColor={colors.background}>
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={colors.accent || '#2D6A4F'} />
-        </View>
-      </Screen>
-    );
-  }
+  // Reload every time the screen comes into focus (e.g. after saving a workout)
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      getWorkoutsWithLastCompleted()
+        .then((data) => {
+          if (!active) return;
+          setWorkouts(data);
+          setError(null);
+        })
+        .catch((e: unknown) => {
+          if (active) setError(e instanceof Error ? e.message : 'Failed to load workouts');
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
 
   return (
-    <Screen padding="lg" backgroundColor={colors.background}>
-      <View style={styles.centerContainer}>
-        <Stack gap="lg">
-          <Stack gap="sm">
-            <Text size="xl" weight="bold">
-              Welcome to the Plant Care App
-            </Text>
-            <Text size="md">Manage your plants and their care easily.</Text>
-          </Stack>
+    <SafeAreaView style={styles.container}>
+      <Text style={styles.title}>Workouts</Text>
 
-          <View style={styles.buttonContainer}>
-            <View style={styles.buttonWrapper}>
-              <StyledButton
-                label="Get Started with Photo"
-                onPress={handleGetStarted}
-                variant="primary"
-                isLoading={isLoading}
-              />
+      <Pressable style={styles.primaryButton} onPress={() => router.push('/workout')}>
+        <Text style={styles.primaryButtonText}>+ New workout</Text>
+      </Pressable>
+
+      {loading ? (
+        <ActivityIndicator style={styles.center} />
+      ) : error ? (
+        <Text style={styles.error}>{error}</Text>
+      ) : (
+        <FlatList
+          data={workouts}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.list}
+          ListEmptyComponent={
+            <Text style={styles.empty}>No workouts yet. Create your first one!</Text>
+          }
+          renderItem={({ item }) => (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>{item.name}</Text>
+              <Text style={styles.cardSub}>
+                {item.last_completed
+                  ? `Last done ${new Date(item.last_completed).toLocaleDateString()}`
+                  : 'Never done'}
+              </Text>
             </View>
-            <View style={styles.buttonWrapper}>
-              <StyledButton
-                label="Start without Photo"
-                onPress={handleStartWithoutPhoto}
-                variant="secondary"
-              />
-            </View>
-          </View>
-        </Stack>
-      </View>
-    </Screen>
+          )}
+        />
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
+  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
+  title: { fontSize: 28, fontWeight: '700', marginBottom: 16 },
+  primaryButton: {
+    backgroundColor: '#111',
+    paddingVertical: 14,
+    borderRadius: 12,
     alignItems: 'center',
+    marginBottom: 20,
   },
-  buttonContainer: {
-    width: 260,
-    alignItems: 'stretch',
-    marginTop: spacing.lg,
-    gap: 12,
-  },
-  buttonWrapper: {
-    width: '100%',
-  },
+  primaryButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  center: { marginTop: 40 },
+  list: { gap: 12 },
+  empty: { textAlign: 'center', color: '#888', marginTop: 40 },
+  error: { color: '#c00', marginTop: 20 },
+  card: { padding: 16, borderRadius: 12, backgroundColor: '#f3f3f3' },
+  cardTitle: { fontSize: 18, fontWeight: '600' },
+  cardSub: { color: '#666', marginTop: 4 },
 });

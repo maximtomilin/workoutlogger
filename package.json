@@ -1,5 +1,5 @@
 {
-  "name": "ucll-mobile-starter",
+  "name": "workout-logger",
   "version": "1.0.0",
   "main": "expo-router/entry",
   "scripts": {
