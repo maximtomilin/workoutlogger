@@ -1,7 +1,7 @@
 {
-  "name": "Plant Care",
-  "short_name": "Plant",
-  "description": "Plant Care App",
+  "name": "Workout Logger",
+  "short_name": "WL",
+  "description": "App for logging workouts and tracking progress",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
