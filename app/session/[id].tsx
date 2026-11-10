@@ -235,6 +235,7 @@ export default function SessionScreen() {
             {error && <Text style={styles.error}>{error}</Text>}
           </ScrollView>
 
+          <View style={styles.footer}>
           <Pressable
             style={[styles.primaryButton, finishing && styles.disabled]}
             onPress={finish}
@@ -246,6 +247,7 @@ export default function SessionScreen() {
               <Text style={styles.primaryButtonText}>Finish workout</Text>
             )}
           </Pressable>
+          </View>
         </>
       )}
     </SafeAreaView>
@@ -255,7 +257,7 @@ export default function SessionScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   center: { marginTop: 40 },
-  content: { padding: 20, gap: 16 },
+  content: { padding: 20, gap: 16, width: '100%', maxWidth: 520, alignSelf: 'center' },
   empty: { color: '#888', textAlign: 'center', marginTop: 20 },
   error: { color: '#c00' },
   card: { padding: 16, borderRadius: 12, backgroundColor: '#f3f3f3', gap: 8 },
@@ -265,7 +267,7 @@ const styles = StyleSheet.create({
   headerText: { color: '#666', fontSize: 12, fontWeight: '600', textAlign: 'center' },
   setRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   colSet: { width: 28, textAlign: 'center' },
-  colInput: { flex: 1 },
+  colInput: { flex: 1, minWidth: 0 },
   colAction: { width: 64 },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   setNumber: { fontWeight: '600' },
@@ -295,9 +297,9 @@ const styles = StyleSheet.create({
   remove: { color: '#c00', fontSize: 16 },
   addSet: { paddingVertical: 8, alignItems: 'center' },
   addSetText: { fontWeight: '600' },
+  footer: { width: '100%', maxWidth: 520, alignSelf: 'center', padding: 20 },
   primaryButton: {
     backgroundColor: '#111',
-    margin: 20,
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
