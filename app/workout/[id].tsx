@@ -9,6 +9,8 @@ import {
   removeExerciseFromWorkout,
 } from '@/services/workoutExerciseService';
 import { deleteWorkout, getWorkout } from '@/services/workoutService';
+import { getLatestWorkoutExport } from '@/services/exportService';
+import { exportText } from '@/services/exportActions';
 import type { Exercise, WorkoutExerciseWithExercise } from '@/types';
 
 const DEFAULT_SETS = 3;
@@ -22,6 +24,7 @@ export default function EditWorkoutScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Next free position, kept in a ref so quick taps in the picker can't reuse a number
@@ -78,6 +81,24 @@ export default function EditWorkoutScreen() {
     }
   }
 
+  // Exports the most recent completed session of this workout
+  async function exportLatest() {
+    setExporting(true);
+    setError(null);
+    try {
+      const data = await getLatestWorkoutExport(id);
+      if (!data) {
+        setError("You haven't completed this workout yet, so there's nothing to export.");
+        return;
+      }
+      await exportText(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export failed.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function removeWorkout() {
     setBusy(true);
     setError(null);
@@ -118,6 +139,14 @@ export default function EditWorkoutScreen() {
 
           <Pressable style={styles.secondaryButton} onPress={() => setPickerOpen(true)}>
             <Text style={styles.secondaryButtonText}>+ Add exercise</Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.secondaryButton, exporting && styles.disabled]}
+            onPress={exportLatest}
+            disabled={exporting}
+          >
+            <Text style={styles.secondaryButtonText}>Export last session (.txt)</Text>
           </Pressable>
 
           {error && <Text style={styles.error}>{error}</Text>}
