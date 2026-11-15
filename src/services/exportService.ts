@@ -8,6 +8,7 @@ export type ExportedExercise = {
   volume: number;
 };
 export type WorkoutExport = {
+  id: string; // session id
   workoutName: string;
   startedAt: string;
   completedAt: string;
@@ -25,30 +26,19 @@ type RawSet = {
   exercise: { name: string; muscle_target: string } | null;
 };
 type RawSession = {
+  id: string;
   started_at: string;
   completed_at: string;
   workout: { name: string } | null;
   logged_sets: RawSet[];
 };
 
+const SESSION_SELECT =
+  'id, started_at, completed_at, workout:workouts(name), logged_sets(exercise_id, set_number, reps, weight_kg, completed_at, exercise:exercises(name, muscle_target))';
+
 const round = (n: number) => Math.round(n * 100) / 100;
 
-// The most recently completed session, with its sets and exercise names
-export async function getLatestWorkoutExport(workoutId?: string): Promise<WorkoutExport | null> {
-  let query = supabase
-    .from('workout_sessions')
-    .select(
-      'started_at, completed_at, workout:workouts(name), logged_sets(exercise_id, set_number, reps, weight_kg, completed_at, exercise:exercises(name, muscle_target))'
-    )
-    .not('completed_at', 'is', null)
-    .order('completed_at', { ascending: false })
-    .limit(1);
-  if (workoutId) query = query.eq('workout_id', workoutId);
-  const { data, error } = await query.maybeSingle();
-  if (error) throw error;
-  if (!data) return null;
-
-  const session = data as unknown as RawSession;
+function buildExport(session: RawSession): WorkoutExport {
   const sorted = [...session.logged_sets].sort(
     (a, b) => a.completed_at.localeCompare(b.completed_at) || a.set_number - b.set_number
   );
@@ -75,6 +65,7 @@ export async function getLatestWorkoutExport(workoutId?: string): Promise<Workou
 
   const durationMs = new Date(session.completed_at).getTime() - new Date(session.started_at).getTime();
   return {
+    id: session.id,
     workoutName: session.workout?.name ?? 'Workout',
     startedAt: session.started_at,
     completedAt: session.completed_at,
@@ -82,6 +73,32 @@ export async function getLatestWorkoutExport(workoutId?: string): Promise<Workou
     exercises,
     totalVolume: round(exercises.reduce((sum, e) => sum + e.volume, 0)),
   };
+}
+
+// The most recently completed session, optionally for one workout
+export async function getLatestWorkoutExport(workoutId?: string): Promise<WorkoutExport | null> {
+  let query = supabase
+    .from('workout_sessions')
+    .select(SESSION_SELECT)
+    .not('completed_at', 'is', null)
+    .order('completed_at', { ascending: false })
+    .limit(1);
+  if (workoutId) query = query.eq('workout_id', workoutId);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  return data ? buildExport(data as unknown as RawSession) : null;
+}
+
+// All completed sessions, newest first
+export async function getWorkoutExports(limit = 100): Promise<WorkoutExport[]> {
+  const { data, error } = await supabase
+    .from('workout_sessions')
+    .select(SESSION_SELECT)
+    .not('completed_at', 'is', null)
+    .order('completed_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data as unknown as RawSession[]).map(buildExport);
 }
 
 function formatSet(s: ExportedSet): string {
