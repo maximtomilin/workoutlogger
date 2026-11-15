@@ -22,13 +22,14 @@ function icon(active: IconName, inactive: IconName) {
 export default function TabsLayout() {
   return (
     <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: '#111',
-        tabBarInactiveTintColor: '#999',
-        tabBarShowLabel: false, // icons only, like Instagram
-      }}
-    >
+        screenOptions={{
+            headerShown: false,
+            tabBarActiveTintColor: '#111',
+            tabBarInactiveTintColor: '#999',
+            tabBarShowLabel: false,
+            tabBarStyle: { height: 85, paddingTop: 8 },
+        }}
+        >
       <Tabs.Screen
         name="index"
         options={{ title: 'Home', tabBarIcon: icon('home', 'home-outline') }}
