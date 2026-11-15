@@ -13,9 +13,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import ExercisePicker from '@/components/ExercisePicker';
 import { addExerciseToWorkout } from '@/services/workoutExerciseService';
 import { createWorkout, deleteWorkout } from '@/services/workoutService';
+import { parseRepRange } from '@/types/repRange';
 import type { Exercise } from '@/types';
 
-type SelectedExercise = { exercise: Exercise; targetSets: string };
+type SelectedExercise = {
+  exercise: Exercise;
+  targetSets: string;
+  repMin: string;
+  repMax: string;
+};
 
 export default function NewWorkoutScreen() {
   const router = useRouter();
@@ -29,13 +35,16 @@ export default function NewWorkoutScreen() {
     setSelected((prev) =>
       prev.some((s) => s.exercise.id === exercise.id)
         ? prev
-        : [...prev, { exercise, targetSets: '3' }]
+        : [...prev, { exercise, targetSets: '3', repMin: '', repMax: '' }]
     );
   }
 
-  function updateSets(exerciseId: string, targetSets: string) {
+  function updateField(
+    exerciseId: string,
+    changes: Partial<Omit<SelectedExercise, 'exercise'>>
+  ) {
     setSelected((prev) =>
-      prev.map((s) => (s.exercise.id === exerciseId ? { ...s, targetSets } : s))
+      prev.map((s) => (s.exercise.id === exerciseId ? { ...s, ...changes } : s))
     );
   }
 
@@ -48,6 +57,18 @@ export default function NewWorkoutScreen() {
       setError('Give your workout a name.');
       return;
     }
+
+    // Validate every rep range before anything is saved
+    const ranges: { repMin: number | null; repMax: number | null }[] = [];
+    for (const s of selected) {
+      const range = parseRepRange(s.repMin, s.repMax);
+      if (range.error !== null) {
+        setError(`${s.exercise.name}: ${range.error}`);
+        return;
+      }
+      ranges.push({ repMin: range.repMin, repMax: range.repMax });
+    }
+
     setSaving(true);
     setError(null);
 
@@ -62,6 +83,8 @@ export default function NewWorkoutScreen() {
           exercise_id: selected[i].exercise.id,
           position: i,
           target_sets: Number.isNaN(sets) ? null : sets,
+          rep_min: ranges[i].repMin,
+          rep_max: ranges[i].repMax,
         });
       }
       router.back();
@@ -87,23 +110,49 @@ export default function NewWorkoutScreen() {
         />
 
         <Text style={styles.label}>Exercises</Text>
+        <Text style={styles.help}>
+          The rep range is optional. If you hit the top of it on your last set, the app suggests
+          going up in weight next time.
+        </Text>
         {selected.length === 0 && <Text style={styles.empty}>No exercises added yet.</Text>}
-        {selected.map(({ exercise, targetSets }) => (
-          <View key={exercise.id} style={styles.exerciseRow}>
-            <View style={styles.exerciseInfo}>
-              <Text style={styles.exerciseName}>{exercise.name}</Text>
-              <Text style={styles.exerciseMuscle}>{exercise.muscle_target}</Text>
+        {selected.map(({ exercise, targetSets, repMin, repMax }) => (
+          <View key={exercise.id} style={styles.exerciseCard}>
+            <View style={styles.exerciseTop}>
+              <View style={styles.exerciseInfo}>
+                <Text style={styles.exerciseName}>{exercise.name}</Text>
+                <Text style={styles.exerciseMuscle}>{exercise.muscle_target}</Text>
+              </View>
+              <Pressable onPress={() => removeExercise(exercise.id)} hitSlop={8}>
+                <Text style={styles.remove}>✕</Text>
+              </Pressable>
             </View>
-            <TextInput
-              style={styles.setsInput}
-              keyboardType="number-pad"
-              value={targetSets}
-              onChangeText={(t) => updateSets(exercise.id, t)}
-            />
-            <Text style={styles.setsLabel}>sets</Text>
-            <Pressable onPress={() => removeExercise(exercise.id)} hitSlop={8}>
-              <Text style={styles.remove}>✕</Text>
-            </Pressable>
+
+            <View style={styles.fieldsRow}>
+              <TextInput
+                style={styles.smallInput}
+                keyboardType="number-pad"
+                value={targetSets}
+                onChangeText={(t) => updateField(exercise.id, { targetSets: t })}
+              />
+              <Text style={styles.fieldLabel}>sets</Text>
+
+              <TextInput
+                style={styles.smallInput}
+                keyboardType="number-pad"
+                placeholder="8"
+                value={repMin}
+                onChangeText={(t) => updateField(exercise.id, { repMin: t })}
+              />
+              <Text style={styles.fieldLabel}>to</Text>
+              <TextInput
+                style={styles.smallInput}
+                keyboardType="number-pad"
+                placeholder="12"
+                value={repMax}
+                onChangeText={(t) => updateField(exercise.id, { repMax: t })}
+              />
+              <Text style={styles.fieldLabel}>reps</Text>
+            </View>
           </View>
         ))}
 
@@ -140,6 +189,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   content: { padding: 20, gap: 12 },
   label: { fontSize: 14, fontWeight: '600', color: '#444', marginTop: 8 },
+  help: { color: '#666', fontSize: 13, lineHeight: 18 },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',
@@ -149,27 +199,22 @@ const styles = StyleSheet.create({
   },
   empty: { color: '#888' },
   error: { color: '#c00' },
-  exerciseRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: 12,
-    borderRadius: 10,
-    backgroundColor: '#f3f3f3',
-  },
+  exerciseCard: { padding: 12, borderRadius: 10, backgroundColor: '#f3f3f3', gap: 10 },
+  exerciseTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   exerciseInfo: { flex: 1 },
   exerciseName: { fontSize: 16, fontWeight: '600' },
   exerciseMuscle: { color: '#666', marginTop: 2 },
-  setsInput: {
-    width: 44,
+  fieldsRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  smallInput: {
+    width: 48,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#bbb',
     borderRadius: 8,
-    padding: 6,
+    padding: 8,
     textAlign: 'center',
     backgroundColor: '#fff',
   },
-  setsLabel: { color: '#666' },
+  fieldLabel: { color: '#666', marginRight: 6 },
   remove: { fontSize: 18, color: '#c00', paddingHorizontal: 4 },
   primaryButton: {
     backgroundColor: '#111',

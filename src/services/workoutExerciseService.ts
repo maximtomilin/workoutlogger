@@ -3,7 +3,7 @@ import type {
   NewWorkoutExercise,
   WorkoutExercise,
   WorkoutExerciseWithExercise,
-} from './../types';
+} from '@/types';
 
 // Exercises in a workout, in order, with the exercise details joined in
 export async function getWorkoutExercises(
@@ -26,7 +26,7 @@ export async function addExerciseToWorkout(item: NewWorkoutExercise): Promise<Wo
 
 export async function updateWorkoutExercise(
   id: string,
-  changes: Partial<Pick<WorkoutExercise, 'target_sets' | 'position'>>
+  changes: Partial<Pick<WorkoutExercise, 'target_sets' | 'position' | 'rep_min' | 'rep_max'>>
 ): Promise<WorkoutExercise> {
   const { data, error } = await supabase
     .from('workout_exercises')

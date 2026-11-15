@@ -77,6 +77,37 @@ function SetInput({ done, focused, ...props }: SetInputProps) {
   );
 }
 
+// Soft suggestion, never enforced: shown when the last set of the previous session
+// reached the top of the rep range. It disappears once you log a heavier weight.
+function ProgressionHint({
+  item,
+  rows,
+  last,
+}: {
+  item: WorkoutExerciseWithExercise;
+  rows: SetRow[];
+  last: LoggedSet[];
+}) {
+  const prev = last[last.length - 1];
+  if (item.rep_max === null || !prev || prev.reps < item.rep_max) return null;
+
+  const prevWeight = Number(prev.weight_kg);
+  const increased = rows.some(
+    (r) => r.loggedId !== null && parseFloat(r.weight.replace(',', '.')) > prevWeight
+  );
+  if (increased) return null;
+
+  return (
+    <View style={styles.progressBox}>
+      <Text style={styles.progressText}>
+        Last time you hit {prev.reps} reps on your last set
+        {prevWeight > 0 ? ` at ${prevWeight} kg` : ''}. You can go up in weight this time, or stay
+        where you are.
+      </Text>
+    </View>
+  );
+}
+
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -272,6 +303,12 @@ export default function SessionScreen() {
               <View key={item.id} style={styles.card}>
                 <Text style={styles.exerciseName}>{item.exercise.name}</Text>
                 <Text style={styles.exerciseMuscle}>{item.exercise.muscle_target}</Text>
+                {item.rep_min !== null && item.rep_max !== null && (
+                  <Text style={styles.target}>
+                    Target: {item.rep_min}–{item.rep_max} reps
+                  </Text>
+                )}
+                <ProgressionHint item={item} rows={rows} last={last} />
 
                 <View style={styles.headerRow}>
                   <Text style={[styles.headerText, styles.colSet]}>Set</Text>
@@ -369,6 +406,15 @@ const styles = StyleSheet.create({
   card: { padding: 16, borderRadius: 12, backgroundColor: '#f3f3f3', gap: 8 },
   exerciseName: { fontSize: 18, fontWeight: '700' },
   exerciseMuscle: { color: '#666', marginBottom: 4 },
+  target: { color: '#444', fontWeight: '600' },
+  progressBox: {
+    backgroundColor: '#fff6d6',
+    borderWidth: 1,
+    borderColor: '#f0d46a',
+    borderRadius: 8,
+    padding: 10,
+  },
+  progressText: { color: '#5c4a00', fontSize: 13, lineHeight: 18 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerText: { color: '#666', fontSize: 12, fontWeight: '600', textAlign: 'center' },
   setRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
