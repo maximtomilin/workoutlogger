@@ -45,7 +45,7 @@ export default function HomeScreen() {
     try {
       const existing = await getActiveSession(workoutId);
       const session = existing ?? (await startSession(workoutId));
-      router.push(`/session/${session.id}`);
+      router.push({ pathname: '/session/[id]', params: { id: session.id } });
     } catch (e) {
       setBeginError(e instanceof Error ? e.message : 'Could not start workout.');
     } finally {
@@ -54,12 +54,13 @@ export default function HomeScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <Text style={styles.title}>Workouts</Text>
 
-      <Pressable style={styles.primaryButton} onPress={() => router.push('/workout')}>
+      <Pressable style={styles.primaryButton} onPress={() => router.push('/workout/new')}>
         <Text style={styles.primaryButtonText}>+ New workout</Text>
       </Pressable>
+
 
       {beginError && <Text style={styles.error}>{beginError}</Text>}
 
@@ -85,7 +86,7 @@ export default function HomeScreen() {
                     : 'Never done'}
                 </Text>
               </View>
-              <Pressable onPress={() => router.push(`./workout/${item.id}`)} hitSlop={8}>
+              <Pressable onPress={() => router.push({ pathname: '/workout/[id]', params: { id: item.id } })} hitSlop={8}>
                 <Text style={styles.editText}>Edit</Text>
               </Pressable>
               <Pressable
@@ -108,7 +109,7 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
+  container: { flex: 1, padding: 20, backgroundColor: '#fff', width: '100%', maxWidth: 520, alignSelf: 'center' },
   title: { fontSize: 28, fontWeight: '700', marginBottom: 16 },
   primaryButton: {
     backgroundColor: '#111',

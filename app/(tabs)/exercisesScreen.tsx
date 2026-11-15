@@ -8,13 +8,14 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import EditExerciseModal from '@/components/EditExerciseModal';
 import { getExercises } from '@/services/exerciseService';
 import type { Exercise } from '@/types';
 
 export default function ExercisesScreen() {
+  const router = useRouter();
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +63,7 @@ export default function ExercisesScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <Text style={styles.title}>Exercises</Text>
       <Text style={styles.subtitle}>
-        {exercises.length} {exercises.length === 1 ? 'exercise' : 'exercises'} saved
+        {exercises.length} {exercises.length === 1 ? 'exercise' : 'exercises'} saved · tap one to see your progress
       </Text>
 
       <TextInput
@@ -90,7 +91,7 @@ export default function ExercisesScreen() {
             </Text>
           }
           renderItem={({ item }) => (
-            <View style={styles.row}>
+            <Pressable style={styles.row} onPress={() => router.push({ pathname: '/exercise/[id]', params: { id: item.id } })}>
               <Text style={styles.name}>{item.name}</Text>
               <View style={styles.chip}>
                 <Text style={styles.chipText}>{item.muscle_target}</Text>
@@ -98,7 +99,7 @@ export default function ExercisesScreen() {
               <Pressable onPress={() => setEditing(item)} hitSlop={8}>
                 <Text style={styles.edit}>Edit</Text>
               </Pressable>
-            </View>
+            </Pressable>
           )}
         />
       )}
