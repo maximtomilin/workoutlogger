@@ -34,11 +34,11 @@ export default function TabsLayout() {
         options={{ title: 'Home', tabBarIcon: icon('home', 'home-outline') }}
       />
       <Tabs.Screen
-        name="exercises"
+        name="exercisesScreen"
         options={{ title: 'Exercises', tabBarIcon: icon('barbell', 'barbell-outline') }}
       />
       <Tabs.Screen
-        name="history"
+        name="historyScreen"
         options={{ title: 'History', tabBarIcon: icon('time', 'time-outline') }}
       />
     </Tabs>

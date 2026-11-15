@@ -11,9 +11,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { createExercise, getExercises } from '@/services/exerciseService';
+import { MUSCLES } from '@/types/muscles';
 import type { Exercise } from '@/types';
-
-const MUSCLES = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Legs', 'Glutes', 'Core'];
 
 type Props = {
   visible: boolean;
