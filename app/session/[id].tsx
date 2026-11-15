@@ -10,11 +10,19 @@ import {
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { deleteSet, getLastSetsForExercise, getSetsForSession, logSet } from '@/services/loggedSetService';
+import {
+  deleteSet,
+  getLastSetsForExercise,
+  getSetsForSession,
+  logSet,
+  updateSet,
+} from '@/services/loggedSetService';
 import { getWorkoutExercises } from '@/services/workoutExerciseService';
 import { getWorkout } from '@/services/workoutService';
 import { completeSession, getSession } from '@/services/workoutSessionService';
 import type { LoggedSet, WorkoutExerciseWithExercise } from '@/types';
+
+type SavedValues = { reps: string; weight: string };
 
 type SetRow = {
   key: string;
@@ -22,16 +30,51 @@ type SetRow = {
   reps: string;
   weight: string;
   loggedId: string | null; // set once saved to the database
+  saved: SavedValues | null; // what is currently stored, used to detect edits
 };
 
 type ExerciseState = {
   item: WorkoutExerciseWithExercise;
   rows: SetRow[];
-  last: LoggedSet[]; // sets from the previous session, shown as placeholders
+  last: LoggedSet[]; // sets from the previous session
 };
 
 function emptyRow(exerciseId: string, setNumber: number): SetRow {
-  return { key: `new-${exerciseId}-${setNumber}`, setNumber, reps: '', weight: '', loggedId: null };
+  return {
+    key: `new-${exerciseId}-${setNumber}`,
+    setNumber,
+    reps: '',
+    weight: '',
+    loggedId: null,
+    saved: null,
+  };
+}
+
+type SetInputProps = {
+  value: string;
+  placeholder: string;
+  keyboardType: 'decimal-pad' | 'number-pad';
+  done: boolean;
+  focused: boolean;
+  onChangeText: (text: string) => void;
+  onFocus: () => void;
+  onBlur: () => void;
+};
+
+function SetInput({ done, focused, ...props }: SetInputProps) {
+  return (
+    <TextInput
+      {...props}
+      style={[
+        styles.input,
+        styles.colInput,
+        done && styles.inputDone,
+        focused && styles.inputFocused,
+      ]}
+      placeholderTextColor="#aaa"
+      selectTextOnFocus
+    />
+  );
 }
 
 export default function SessionScreen() {
@@ -41,6 +84,7 @@ export default function SessionScreen() {
   const [exercises, setExercises] = useState<ExerciseState[]>([]);
   const [loading, setLoading] = useState(true);
   const [finishing, setFinishing] = useState(false);
+  const [focused, setFocused] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -68,6 +112,7 @@ export default function SessionScreen() {
               reps: String(s.reps),
               weight: String(s.weight_kg),
               loggedId: s.id,
+              saved: { reps: String(s.reps), weight: String(s.weight_kg) },
             }));
           // Pad with empty rows up to the planned number of sets
           const target = item.target_sets ?? 3;
@@ -122,31 +167,74 @@ export default function SessionScreen() {
     );
   }
 
-  // Tapping the checkbox saves the set; tapping it again undoes it so you can edit
-  async function toggleSet(exerciseId: string, row: SetRow) {
+  // Tapping the checkmark saves the set. Empty fields reuse last session's values.
+  // Tapping it again undoes the set.
+  async function toggleSet(exerciseId: string, row: SetRow, prev: LoggedSet | undefined) {
     setError(null);
     try {
       if (row.loggedId) {
         await deleteSet(row.loggedId);
-        patchRow(exerciseId, row.key, { loggedId: null });
+        patchRow(exerciseId, row.key, { loggedId: null, saved: null });
         return;
       }
-      const reps = parseInt(row.reps, 10);
+
+      const repsText = row.reps.trim() !== '' ? row.reps : prev ? String(prev.reps) : '';
+      const reps = parseInt(repsText, 10);
       if (Number.isNaN(reps) || reps <= 0) {
         setError('Enter the number of reps first.');
         return;
       }
-      const w = parseFloat(row.weight.replace(',', '.'));
+      const weightText = row.weight.trim() !== '' ? row.weight : prev ? String(prev.weight_kg) : '';
+      const parsedWeight = parseFloat(weightText.replace(',', '.'));
+      const weight = Number.isNaN(parsedWeight) ? 0 : parsedWeight;
+
       const saved = await logSet({
         session_id: id,
         exercise_id: exerciseId,
         set_number: row.setNumber,
         reps,
-        weight_kg: Number.isNaN(w) ? 0 : w,
+        weight_kg: weight,
       });
-      patchRow(exerciseId, row.key, { loggedId: saved.id });
+      // Show the values that were actually saved, including any reused ones
+      patchRow(exerciseId, row.key, {
+        loggedId: saved.id,
+        reps: String(reps),
+        weight: String(weight),
+        saved: { reps: String(reps), weight: String(weight) },
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save set.');
+    }
+  }
+
+  // Editing a set that is already saved: update it when the field loses focus.
+  // An emptied field keeps its saved value.
+  async function saveEdit(exerciseId: string, row: SetRow) {
+    if (!row.loggedId || !row.saved) return;
+    const repsText = row.reps.trim() !== '' ? row.reps : row.saved.reps;
+    const weightText = row.weight.trim() !== '' ? row.weight : row.saved.weight;
+    if (repsText === row.saved.reps && weightText === row.saved.weight) {
+      patchRow(exerciseId, row.key, { reps: repsText, weight: weightText });
+      return;
+    }
+
+    const reps = parseInt(repsText, 10);
+    const weight = parseFloat(weightText.replace(',', '.'));
+    if (Number.isNaN(reps) || reps <= 0 || Number.isNaN(weight) || weight < 0) {
+      patchRow(exerciseId, row.key, { reps: row.saved.reps, weight: row.saved.weight });
+      setError('Reps and weight must be valid numbers.');
+      return;
+    }
+    try {
+      await updateSet(row.loggedId, { reps, weight_kg: weight });
+      patchRow(exerciseId, row.key, {
+        reps: String(reps),
+        weight: String(weight),
+        saved: { reps: String(reps), weight: String(weight) },
+      });
+    } catch (e) {
+      patchRow(exerciseId, row.key, { reps: row.saved.reps, weight: row.saved.weight });
+      setError(e instanceof Error ? e.message : 'Could not update set.');
     }
   }
 
@@ -171,6 +259,11 @@ export default function SessionScreen() {
       ) : (
         <>
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+            <Text style={styles.hint}>
+              Tap any weight or reps field to edit it. Grey numbers are from your last session and
+              are used if you leave a field empty when you tap ✓.
+            </Text>
+
             {exercises.length === 0 && !error && (
               <Text style={styles.empty}>This workout has no exercises.</Text>
             )}
@@ -190,29 +283,41 @@ export default function SessionScreen() {
                 {rows.map((row) => {
                   const prev = last.find((s) => s.set_number === row.setNumber);
                   const done = row.loggedId !== null;
+                  const weightKey = `${row.key}-weight`;
+                  const repsKey = `${row.key}-reps`;
                   return (
                     <View key={row.key} style={styles.setRow}>
                       <Text style={[styles.setNumber, styles.colSet]}>{row.setNumber}</Text>
-                      <TextInput
-                        style={[styles.input, styles.colInput, done && styles.inputDone]}
-                        keyboardType="decimal-pad"
-                        placeholder={prev ? String(prev.weight_kg) : '0'}
+                      <SetInput
                         value={row.weight}
-                        editable={!done}
+                        placeholder={prev ? String(prev.weight_kg) : '0'}
+                        keyboardType="decimal-pad"
+                        done={done}
+                        focused={focused === weightKey}
                         onChangeText={(t) => patchRow(item.exercise_id, row.key, { weight: t })}
+                        onFocus={() => setFocused(weightKey)}
+                        onBlur={() => {
+                          setFocused(null);
+                          saveEdit(item.exercise_id, row);
+                        }}
                       />
-                      <TextInput
-                        style={[styles.input, styles.colInput, done && styles.inputDone]}
-                        keyboardType="number-pad"
-                        placeholder={prev ? String(prev.reps) : '0'}
+                      <SetInput
                         value={row.reps}
-                        editable={!done}
+                        placeholder={prev ? String(prev.reps) : '0'}
+                        keyboardType="number-pad"
+                        done={done}
+                        focused={focused === repsKey}
                         onChangeText={(t) => patchRow(item.exercise_id, row.key, { reps: t })}
+                        onFocus={() => setFocused(repsKey)}
+                        onBlur={() => {
+                          setFocused(null);
+                          saveEdit(item.exercise_id, row);
+                        }}
                       />
                       <View style={[styles.colAction, styles.actions]}>
                         <Pressable
                           style={[styles.check, done && styles.checkDone]}
-                          onPress={() => toggleSet(item.exercise_id, row)}
+                          onPress={() => toggleSet(item.exercise_id, row, prev)}
                         >
                           <Text style={done ? styles.checkTextDone : styles.checkText}>✓</Text>
                         </Pressable>
@@ -236,17 +341,17 @@ export default function SessionScreen() {
           </ScrollView>
 
           <View style={styles.footer}>
-          <Pressable
-            style={[styles.primaryButton, finishing && styles.disabled]}
-            onPress={finish}
-            disabled={finishing}
-          >
-            {finishing ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.primaryButtonText}>Finish workout</Text>
-            )}
-          </Pressable>
+            <Pressable
+              style={[styles.primaryButton, finishing && styles.disabled]}
+              onPress={finish}
+              disabled={finishing}
+            >
+              {finishing ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Finish workout</Text>
+              )}
+            </Pressable>
           </View>
         </>
       )}
@@ -258,6 +363,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   center: { marginTop: 40 },
   content: { padding: 20, gap: 16, width: '100%', maxWidth: 520, alignSelf: 'center' },
+  hint: { color: '#666', fontSize: 13, lineHeight: 18 },
   empty: { color: '#888', textAlign: 'center', marginTop: 20 },
   error: { color: '#c00' },
   card: { padding: 16, borderRadius: 12, backgroundColor: '#f3f3f3', gap: 8 },
@@ -272,15 +378,18 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   setNumber: { fontWeight: '600' },
   input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
+    borderWidth: 1.5,
+    borderColor: '#9a9a9a',
     borderRadius: 8,
-    padding: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     textAlign: 'center',
-    fontSize: 16,
+    fontSize: 17,
+    fontWeight: '600',
     backgroundColor: '#fff',
   },
-  inputDone: { backgroundColor: '#e3f5e6', borderColor: '#b9e2c0' },
+  inputDone: { backgroundColor: '#e3f5e6', borderColor: '#7cc78b' },
+  inputFocused: { borderColor: '#0a84ff', borderWidth: 2 },
   check: {
     width: 32,
     height: 32,
